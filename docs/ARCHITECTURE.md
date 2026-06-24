@@ -142,8 +142,11 @@ A coroutine scheduled by `CoroutineScope(Dispatchers.IO)` runs every 60 seconds
    blob SHA-256 but before committing object or part metadata.
 4. **Unreferenced content blobs** — any file under `<blob-dir>/objects/` whose
    SHA-256 does not appear in live `objects`, `multipart_parts`, or active
-   `blob_write_intents` is tombstoned. Before deletion, the recovery job checks
-   the DB references again so a concurrent commit cannot lose its blob.
+   `blob_write_intents` is tombstoned after the minimum blob age. Before any
+   filesystem move, the recovery job checks DB references again, then moves the
+   blob to `<blob-dir>/.quarantine/`. A later final-delete pass rechecks DB
+   references one more time; newly referenced quarantined blobs are restored to
+   their content-addressed path instead of deleted.
 
 These jobs are designed so that crashing mid-sweep is safe — every step is
 idempotent.

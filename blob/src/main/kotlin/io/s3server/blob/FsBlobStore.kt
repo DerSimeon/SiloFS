@@ -132,10 +132,12 @@ class FsBlobStore(
 ) : BlobStore {
     private val tmpDir: Path = dataDir.resolve(".tmp")
     private val objectsDir: Path = dataDir.resolve("objects")
+    private val quarantineDir: Path = dataDir.resolve(".quarantine")
 
     init {
         Files.createDirectories(tmpDir)
         Files.createDirectories(objectsDir)
+        Files.createDirectories(quarantineDir)
     }
 
     override fun beginWrite(expectedSha256Hex: String?): BlobWrite = FsBlobWrite(this, expectedSha256Hex)
@@ -176,6 +178,49 @@ class FsBlobStore(
 
     override fun deleteTemp(path: Path): Boolean = runCatching { Files.deleteIfExists(path) }.getOrDefault(false)
 
+    fun quarantine(
+        blobPath: Path,
+        sha256Hex: String,
+    ): Path? =
+        runCatching {
+            if (!Files.exists(blobPath)) return null
+            Files.createDirectories(quarantineDir)
+            val target = quarantineDir.resolve(sha256Hex)
+            Files.move(blobPath, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+            fsyncDirectory(quarantineDir)
+            target
+        }.getOrThrow()
+
+    fun listQuarantinedBlobs(olderThanSeconds: Long): List<Path> {
+        val cutoff = System.currentTimeMillis() - olderThanSeconds * 1000L
+        if (!Files.exists(quarantineDir)) return emptyList()
+        return Files
+            .walk(quarantineDir)
+            .use { stream ->
+                stream
+                    .filter { Files.isRegularFile(it) }
+                    .filter { runCatching { Files.getLastModifiedTime(it).toMillis() }.getOrDefault(Long.MAX_VALUE) < cutoff }
+                    .toList()
+            }
+    }
+
+    fun deleteQuarantined(path: Path): Boolean = runCatching { Files.deleteIfExists(path) }.getOrDefault(false)
+
+    fun restoreQuarantined(path: Path): Path? =
+        runCatching {
+            if (!Files.exists(path)) return null
+            val sha = path.fileName.toString()
+            val target = pathFor(sha)
+            ensureParentsFor(sha)
+            if (Files.exists(target)) {
+                Files.deleteIfExists(path)
+                return target
+            }
+            Files.move(path, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+            fsyncDirectory(target.parent)
+            target
+        }.getOrThrow()
+
     override fun concatenate(
         parts: List<Path>,
         expectedSha256Hex: String?,
@@ -198,6 +243,16 @@ class FsBlobStore(
     internal fun ensureParentsFor(sha256Hex: String) {
         val target = pathFor(sha256Hex)
         Files.createDirectories(target.parent)
+    }
+
+    internal fun fsyncDirectory(dir: Path) {
+        try {
+            FileChannel.open(dir, StandardOpenOption.READ).use { it.force(true) }
+        } catch (e: java.nio.file.AccessDeniedException) {
+            if (!System.getProperty("os.name").startsWith("Windows", ignoreCase = true)) {
+                throw e
+            }
+        }
     }
 }
 
@@ -316,7 +371,7 @@ class FsBlobWrite(
         val target = store.pathFor(hex)
 
         Files.move(tmpPath, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
-        fsyncParent(target.parent)
+        store.fsyncDirectory(target.parent)
 
         committed = true
         runCatching { channel.close() }
@@ -337,16 +392,6 @@ class FsBlobWrite(
 
     override fun close() {
         if (!committed) abort()
-    }
-
-    private fun fsyncParent(dir: Path) {
-        try {
-            FileChannel.open(dir, StandardOpenOption.READ).use { it.force(true) }
-        } catch (e: java.nio.file.AccessDeniedException) {
-            if (!System.getProperty("os.name").startsWith("Windows", ignoreCase = true)) {
-                throw e
-            }
-        }
     }
 }
 

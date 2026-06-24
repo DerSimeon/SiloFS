@@ -39,7 +39,7 @@
 | Standard response headers | `Date` (RFC 1123 UTC), `Server: AmazonS3`, `x-amz-request-id`, `x-amz-id-2` on every response. |
 | Content-MD5 | Verified when supplied (RFC 1864); mismatch → `BadDigest`. |
 | Checksums | `x-amz-checksum-{crc32,crc32c,sha1,sha256}` + `x-amz-checksum-type` persisted on PUT, **verified** against actual blob content, echoed on GET/HEAD, propagated by CopyObject. CRC32C uses a from-scratch Castagnoli implementation (JDK has no built-in). Default `checksumType` is `FULL_OBJECT` when any checksum is supplied. |
-| Blob GC | Content-addressed blobs are GC'd by a two-phase tombstone sweep. Live object rows, multipart part rows, and active `blob_write_intents` all count as references; each tombstone is rechecked before filesystem deletion. Soft-deleted objects are excluded so their blobs can be reclaimed. |
+| Blob GC | Content-addressed blobs are GC'd by a tombstone plus quarantine sweep. Live object rows, multipart part rows, and active `blob_write_intents` all count as references; each tombstone is rechecked before moving a blob to quarantine, and quarantined blobs are rechecked again before final deletion. Soft-deleted objects are excluded so their blobs can be reclaimed. |
 | Multipart race safety | `CompleteMultipartUpload` transitions to `COMPLETING` before reading parts, preventing concurrent `UploadPart` mutation. `AbortMultipartUpload` must win `INITIATED -> ABORTED` before deleting parts, so it cannot interfere with active completion. Stuck `COMPLETING` uploads are marked `FAILED_COMPLETION` by recovery based on `completing_at`; they are not reverted to `INITIATED`. |
 
 ## Not supported in M3.1 (returns `NotImplemented` or `NotSupported`)

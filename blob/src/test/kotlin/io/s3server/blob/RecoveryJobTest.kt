@@ -120,11 +120,12 @@ class RecoveryJobTest {
         assertTrue(Files.exists(stored.blobPath))
         assertTrue(Files.exists(unreferenced.blobPath))
 
-        val job = RecoveryJob(store, repo, db)
+        val job = RecoveryJob(store, repo, db, minBlobAgeSeconds = 0)
         job.sweepUnreferencedBlobs()
 
         assertTrue(Files.exists(stored.blobPath))
         assertFalse(Files.exists(unreferenced.blobPath))
+        assertTrue(Files.exists(tmp.resolve(".quarantine").resolve(unreferenced.sha256Hex)))
     }
 
     @Test
@@ -189,11 +190,73 @@ class RecoveryJobTest {
             repo.createBlobWriteIntent(c, stored.sha256Hex)
         }
 
-        val job = RecoveryJob(store, repo, db, blobWriteIntentMaxAgeSeconds = -1)
+        val job =
+            RecoveryJob(
+                store,
+                repo,
+                db,
+                blobWriteIntentMaxAgeSeconds = -1,
+                minBlobAgeSeconds = 0,
+                quarantineMaxAgeSeconds = -1,
+            )
         job.sweepStaleBlobWriteIntents()
         job.sweepUnreferencedBlobs()
-
         assertFalse(Files.exists(stored.blobPath))
+        assertTrue(Files.exists(tmp.resolve(".quarantine").resolve(stored.sha256Hex)))
+
+        job.sweepQuarantinedBlobs()
+
+        assertFalse(Files.exists(tmp.resolve(".quarantine").resolve(stored.sha256Hex)))
+    }
+
+    @Test
+    fun `fresh unreferenced blobs are not eligible for GC`() {
+        val (store, repo, db) = newSystem()
+        val stored = store.writeFromBytes("fresh orphan".toByteArray())
+
+        val job = RecoveryJob(store, repo, db, minBlobAgeSeconds = 3600)
+        job.sweepUnreferencedBlobs()
+
+        assertTrue(Files.exists(stored.blobPath))
+        assertFalse(Files.exists(tmp.resolve(".quarantine").resolve(stored.sha256Hex)))
+    }
+
+    @Test
+    fun `referenced quarantined blobs are restored instead of deleted`() {
+        val (store, repo, db) = newSystem()
+        val stored = store.writeFromBytes("restore me".toByteArray())
+        val quarantined = store.quarantine(stored.blobPath, stored.sha256Hex)!!
+        Files.setLastModifiedTime(quarantined, FileTime.fromMillis(System.currentTimeMillis() - 2 * 3600 * 1000L))
+        db.withTransaction { c ->
+            repo.createBucket(c, "b", "us-east-1", "o")
+            repo.putObject(
+                c,
+                app.silofs.common.ObjectMetadata(
+                    bucket = "b",
+                    key = "k",
+                    blobPath = stored.blobPath.toString(),
+                    blobSha256Hex = stored.sha256Hex,
+                    etag = "\"deadbeef\"",
+                    sizeBytes = stored.sizeBytes,
+                    contentType = "text/plain",
+                    contentEncoding = null,
+                    contentLanguage = null,
+                    cacheControl = null,
+                    contentDisposition = null,
+                    expires = null,
+                    userMetadata = emptyMap(),
+                    versionId = "null",
+                    storageClass = "STANDARD",
+                    createdAt = java.time.Instant.now(),
+                ),
+            )
+        }
+
+        val job = RecoveryJob(store, repo, db, quarantineMaxAgeSeconds = 0)
+        job.sweepQuarantinedBlobs()
+
+        assertTrue(Files.exists(stored.blobPath))
+        assertFalse(Files.exists(quarantined))
     }
 
     @Test

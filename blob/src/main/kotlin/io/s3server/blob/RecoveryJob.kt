@@ -33,6 +33,8 @@ class RecoveryJob(
     private val sweepIntervalSeconds: Long = 60L,
     private val blobSweepIntervalSeconds: Long = 600L,
     private val blobWriteIntentMaxAgeSeconds: Long = 24 * 3600L,
+    private val minBlobAgeSeconds: Long = 600L,
+    private val quarantineMaxAgeSeconds: Long = 3600L,
 ) : AutoCloseable {
     private val log = LoggerFactory.getLogger(RecoveryJob::class.java)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -68,6 +70,7 @@ class RecoveryJob(
         sweepStaleMultipartUploads()
         sweepStaleBlobWriteIntents()
         sweepUnreferencedBlobs()
+        sweepQuarantinedBlobs()
     }
 
     internal fun sweepTempFiles() {
@@ -185,7 +188,7 @@ class RecoveryJob(
         }
 
         // ---- Phase 2: sweep — re-check and delete ----
-        var deleted = 0
+        var quarantined = 0
         var skipped = 0
         val tombstones =
             database.withConnection { conn ->
@@ -208,9 +211,11 @@ class RecoveryJob(
                     lookupReferencedSha256s(conn, listOf(sha)).isEmpty()
                 }
             if (stillUnreferenced) {
-                // Find the blob file by sha256 (sharded path).
+                // Find the blob file by sha256 (sharded path). Move it to
+                // quarantine first; final deletion happens after another DB
+                // reference check in sweepQuarantinedBlobs.
                 val blobPath = blobStore.pathFor(sha)
-                if (blobStore.delete(blobPath)) deleted++
+                if (blobStore.quarantine(blobPath, sha) != null) quarantined++
             } else {
                 // A new reference appeared between mark and sweep — skip.
                 skipped++
@@ -227,8 +232,29 @@ class RecoveryJob(
             }
         }
 
-        if (deleted > 0 || skipped > 0) {
-            log.info("Blob GC: deleted {} blobs, skipped {} (newly referenced)", deleted, skipped)
+        if (quarantined > 0 || skipped > 0) {
+            log.info("Blob GC: quarantined {} blobs, skipped {} (newly referenced)", quarantined, skipped)
+        }
+    }
+
+    internal fun sweepQuarantinedBlobs() {
+        val candidates = (blobStore as FsBlobStore).listQuarantinedBlobs(quarantineMaxAgeSeconds)
+        var deleted = 0
+        var restored = 0
+        for (path in candidates) {
+            val sha = path.fileName.toString()
+            val stillUnreferenced =
+                database.withConnection { conn ->
+                    lookupReferencedSha256s(conn, listOf(sha)).isEmpty()
+                }
+            if (stillUnreferenced) {
+                if (blobStore.deleteQuarantined(path)) deleted++
+            } else {
+                if (blobStore.restoreQuarantined(path) != null) restored++
+            }
+        }
+        if (deleted > 0 || restored > 0) {
+            log.info("Blob GC quarantine: deleted {} blobs, restored {} newly referenced blobs", deleted, restored)
         }
     }
 

@@ -4,7 +4,7 @@ Status after the current hardening pass: all five items below have been addresse
 
 Resolution summary:
 
-- Blob GC now treats active `blob_write_intents` as references and rechecks tombstones before deleting files.
+- Blob GC now treats active `blob_write_intents` as references, applies a minimum blob age, quarantines orphan candidates, and rechecks references before final deletion.
 - `UploadPart` final commit rechecks `state == "INITIATED"` before inserting or replacing a part.
 - `CompleteMultipartUpload` fails immediately when `INITIATED -> COMPLETING` does not transition.
 - `after-fsync` is now a real failpoint between temp-file fsync and atomic rename, with lower-level split-phase blob tests.

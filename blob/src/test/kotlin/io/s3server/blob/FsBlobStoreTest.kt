@@ -235,6 +235,28 @@ class FsBlobStoreTest {
     }
 
     @Test
+    fun `quarantine delete and restore move content safely`() {
+        val store = newStore()
+        val stored = store.writeFromBytes("quarantine me".toByteArray())
+
+        val quarantined = store.quarantine(stored.blobPath, stored.sha256Hex)!!
+
+        assertFalse(Files.exists(stored.blobPath))
+        assertTrue(Files.exists(quarantined))
+        assertEquals(listOf(quarantined), store.listQuarantinedBlobs(olderThanSeconds = -1))
+
+        val restored = store.restoreQuarantined(quarantined)
+
+        assertEquals(stored.blobPath, restored)
+        assertTrue(Files.exists(stored.blobPath))
+        assertFalse(Files.exists(quarantined))
+
+        val quarantinedAgain = store.quarantine(stored.blobPath, stored.sha256Hex)!!
+        assertTrue(store.deleteQuarantined(quarantinedAgain))
+        assertFalse(store.deleteQuarantined(quarantinedAgain))
+    }
+
+    @Test
     fun `concatenate joins parts and recomputes hash`() {
         val store = newStore()
         val p1 = store.writeFromBytes("hello ".toByteArray())
