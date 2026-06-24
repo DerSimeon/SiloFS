@@ -4,15 +4,16 @@ All routes are mounted under the application root and use **path-style** address
 `http://host:port/{bucket}` and `http://host:port/{bucket}/{key+}`.
 
 The SigV4 auth plugin runs as a Ktor `ApplicationCallPipeline` phase *before*
-routing. The only routes exempt from SigV4 are `GET /healthz` and
-`GET /metricsz`.
+routing. The only routes exempt from SigV4 are `GET /healthz`, `GET /readyz`,
+and `GET /metricsz`.
 
 ## Routes
 
 | Method     | Path pattern                    | Handler                       | S3 operation                |
 |------------|---------------------------------|-------------------------------|-----------------------------|
-| `GET`      | `/healthz`                      | `HealthRoute`                 | (internal)                  |
-| `GET`      | `/metricsz`                     | `MetricsRoute`                | (internal)                  |
+| `GET`      | `/healthz`                      | `HealthRoute`                 | (internal liveness)         |
+| `GET`      | `/readyz`                       | `ReadinessRoute`              | (internal readiness)        |
+| `GET`      | `/metricsz`                     | `MetricsRoute`                | (internal Prometheus text)  |
 | `PUT`      | `/{bucket}`                    | `CreateBucket`                | `CreateBucket`              |
 | `HEAD`     | `/{bucket}`                    | `HeadBucket`                  | `HeadBucket`                |
 | `DELETE`   | `/{bucket}`                    | `DeleteBucket`                | (M2) — returns NotImplemented |

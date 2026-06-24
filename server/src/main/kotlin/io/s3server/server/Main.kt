@@ -11,7 +11,7 @@ fun Application.s3Module(config: ServerConfig) {
     installPlugins(config)
     val handlers = S3Handlers(config)
     val multipartHandlers = MultipartHandlers(config)
-    s3Routes(handlers, multipartHandlers)
+    s3Routes(config, handlers, multipartHandlers)
 }
 
 fun main() {

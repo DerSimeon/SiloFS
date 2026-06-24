@@ -35,7 +35,7 @@ fun Application.installPlugins(config: ServerConfig) {
     install(RequestIdPlugin)
     install(CallLogging) {
         level = Level.INFO
-        filter { call -> call.request.path() !in setOf("/healthz", "/metricsz") }
+        filter { call -> call.request.path() !in setOf("/healthz", "/readyz", "/metricsz") }
         mdc("s3-request-id") { call -> call.requestId() ?: "-" }
     }
     install(ContentNegotiation) {
@@ -53,7 +53,7 @@ fun Application.installPlugins(config: ServerConfig) {
     install(SigV4Auth) {
         credentialProvider = config.credentialProvider
         region = config.region
-        publicPaths = setOf("/healthz", "/metricsz")
+        publicPaths = setOf("/healthz", "/readyz", "/metricsz")
         enabled = true
         maxClockSkewSeconds = config.sigv4MaxClockSkewSeconds
     }

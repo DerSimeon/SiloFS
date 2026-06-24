@@ -174,5 +174,9 @@ configured via env vars.
 * Single configurable data directory, default `/var/lib/s3server/data`.
 * Postgres connection via HikariCP, with Flyway applying migrations on boot.
 * Structured logging via SLF4J + Logback JSON encoder.
-* Health check endpoint at `GET /healthz` (no SigV4) for Docker Compose.
-* Metrics endpoint at `GET /metricsz` (Prometheus text format, no SigV4).
+* Liveness endpoint at `GET /healthz` (no SigV4) for Docker Compose.
+* Readiness endpoint at `GET /readyz` (no SigV4) that probes PostgreSQL and
+  write access to the configured data directory.
+* Metrics endpoint at `GET /metricsz` (Prometheus text format, no SigV4) with
+  gauges for active multipart uploads, orphan temp files, quarantined blobs,
+  and blob data directory bytes.

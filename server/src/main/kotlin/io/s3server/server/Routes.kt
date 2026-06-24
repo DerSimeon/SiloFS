@@ -21,7 +21,7 @@ import java.util.Locale
 
 /**
  * Path-style routing. The first path segment is the bucket; the rest (joined
- * with `/`) is the object key. Special endpoints (`/healthz`, `/metricsz`,
+ * with `/`) is the object key. Special endpoints (`/healthz`, `/readyz`, `/metricsz`,
  * `/`) are mounted directly at the root.
  *
  * M3 additions:
@@ -31,13 +31,18 @@ import java.util.Locale
  *   - `DELETE /{bucket}/{key}?uploadId=X` → AbortMultipartUpload
  *   - `GET   /{bucket}/{key}?uploadId=X` → ListParts
  */
-fun Application.s3Routes(handlers: S3Handlers, multipart: MultipartHandlers) {
+fun Application.s3Routes(config: ServerConfig, handlers: S3Handlers, multipart: MultipartHandlers) {
     routing {
         get("/healthz") {
             call.respondText("ok", ContentType.Text.Plain, HttpStatusCode.OK)
         }
+        get("/readyz") {
+            val checks = collectReadiness(config)
+            val status = if (checks.all { it.ok }) HttpStatusCode.OK else HttpStatusCode.ServiceUnavailable
+            call.respondText(renderReadiness(checks), ContentType.Text.Plain, status)
+        }
         get("/metricsz") {
-            call.respondText("# s3-server metrics\n", ContentType.Text.Plain, HttpStatusCode.OK)
+            call.respondText(renderMetrics(collectMetrics(config)), ContentType.Text.Plain, HttpStatusCode.OK)
         }
         // GET / → ListBuckets
         get("/") {
