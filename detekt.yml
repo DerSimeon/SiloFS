@@ -1,0 +1,25 @@
+complexity:
+  active: true
+  LongMethod:
+    threshold: 80
+  LongParameterList:
+    functionThreshold: 10
+    constructorThreshold: 12
+style:
+  active: true
+  WildcardImport:
+    active: false
+  ReturnCount:
+    active: false
+  MagicNumber:
+    active: false
+exceptions:
+  active: true
+empty-blocks:
+  active: true
+  EmptyFunctionBlock:
+    active: false
+performance:
+  active: true
+potential-bugs:
+  active: true
