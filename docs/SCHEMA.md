@@ -113,3 +113,29 @@ CREATE TABLE IF NOT EXISTS blob_write_intents (
 filesystem but before object or multipart-part metadata commits. Blob GC treats
 active intents as references and expires old intents before reclaiming truly
 orphaned blobs.
+
+## V8__access_key_lifecycle_and_audit.sql
+
+V8 extends `access_keys` for M7 security hardening:
+
+```sql
+ALTER TABLE access_keys
+    ADD COLUMN state TEXT NOT NULL DEFAULT 'ACTIVE',
+    ADD COLUMN secret_ciphertext BYTEA,
+    ADD COLUMN secret_nonce BYTEA,
+    ADD COLUMN secret_key_id TEXT,
+    ADD COLUMN updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    ADD COLUMN disabled_at TIMESTAMPTZ,
+    ADD COLUMN deleted_at TIMESTAMPTZ,
+    ADD COLUMN rotated_at TIMESTAMPTZ;
+```
+
+`secret_access_key` becomes nullable. New and rotated keys can store encrypted
+AES-GCM material in `secret_ciphertext` + `secret_nonce` when
+`S3_ACCESS_KEY_SECRET_ENCRYPTION_KEY` is configured. Auth only accepts rows in
+`ACTIVE` state with no `deleted_at`.
+
+V8 also adds `audit_events`, which records mutating S3 requests and admin
+operations with request id, access key id, operation, optional bucket/key,
+status, latency, source, and JSON detail. It deliberately does not store
+secrets, Authorization headers, security tokens, or presigned signatures.

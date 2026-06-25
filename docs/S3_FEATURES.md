@@ -1,4 +1,4 @@
-# S3 feature matrix (through Milestone 6)
+# S3 feature matrix (through Milestone 7)
 
 ## Supported
 
@@ -46,6 +46,11 @@
 | Readiness | `/readyz` probes PostgreSQL, data-directory writeability, and minimum free disk space. |
 | Metrics | `/metricsz` exports request counters, latency histograms, request/response byte counters, active multipart uploads, orphan temp files, quarantined blobs, blob disk bytes, in-flight/rejected limiter counters, DB pool gauges, recovery sweep counters, and blob-store error counters. |
 | Compatibility matrix | M6 Docker-backed tests pass for the Core 5 path-style matrix: AWS SDK Java v2, AWS CLI, boto3, AWS SDK JavaScript v3, and AWS SDK Go v2. See `docs/COMPATIBILITY_M6.md`. |
+| Access keys | Metadata-backed access keys with ACTIVE/DISABLED/DELETED lifecycle. DB-backed auth lookup means create/disable/rotate/delete take effect without server restart. |
+| Secret storage | Access-key secrets can be stored encrypted with AES-GCM using `S3_ACCESS_KEY_SECRET_ENCRYPTION_KEY`; plaintext dev bootstrap remains available unless `S3_REQUIRE_ENCRYPTED_SECRETS=true`. |
+| Rate limiting | Optional per-access-key rate limiting returns S3 `SlowDown` (503) and exports a rejection counter. |
+| Audit logging | Mutating S3 requests and admin access-key changes are recorded in `audit_events` without secrets or presigned signatures. |
+| CORS | Disabled by default. `S3_CORS_ALLOWED_ORIGINS` enables explicit origins; `*` is accepted only when explicitly configured. |
 
 ## Not supported
 
@@ -59,7 +64,7 @@
 | Lifecycle policies | out of scope |
 | Replication / clustering | out of scope |
 | Erasure coding | out of scope |
-| Server-side encryption (SSE-S3, SSE-KMS, SSE-C) | M7 |
+| Server-side encryption (SSE-S3, SSE-KMS, SSE-C) | Deferred to M8.5; use filesystem or block-device encryption until then. |
 | Object Lock | out of scope |
 | Storage classes other than `STANDARD` (accepted but treated as STANDARD) | out of scope |
 

@@ -208,6 +208,11 @@ All settings are env vars; no config file is required.
 | `S3_DB_PASSWORD`                      | `s3server`                             | Postgres password                        |
 | `S3_ACCESS_KEY_ID`                    | `AKIAIOSFODNN7EXAMPLE`                 | SigV4 access key (seeded into `access_keys`) |
 | `S3_SECRET_ACCESS_KEY`                | `wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY` | SigV4 secret key                    |
+| `S3_ACCESS_KEY_SECRET_ENCRYPTION_KEY` | unset                                  | Base64 32-byte AES-GCM key for encrypting access-key secrets |
+| `S3_REQUIRE_ENCRYPTED_SECRETS`        | `false`                                | Reject plaintext access-key secret rows when true |
+| `S3_RATE_LIMIT_PER_ACCESS_KEY_RPS`    | `0`                                    | Per-access-key request rate limit; 0 disables |
+| `S3_RATE_LIMIT_PER_ACCESS_KEY_BURST`  | `64`                                   | Per-access-key token bucket burst size |
+| `S3_CORS_ALLOWED_ORIGINS`             | unset                                  | Comma-separated allowed origins; CORS disabled when unset |
 | `S3_SIGV4_MAX_CLOCK_SKEW_SECONDS`     | `900`                                  | Max allowed clock skew for SigV4 (±15 min) |
 | `S3_RECOVERY_ENABLED`                 | `true`                                 | Start the recovery sweep coroutine       |
 | `S3_RECOVERY_TMP_MAX_AGE_SECONDS`     | `3600`                                 | Orphan temp files older than this are deleted |
@@ -240,7 +245,7 @@ The same contract applies to `UploadPart` and `CompleteMultipartUpload`.
 
 * No streaming SigV4 (`aws-chunked` payloads). M6 Core 5 clients pass without it.
 * No virtual-host style addressing. Configure supported clients for path-style.
-* No server-side encryption (SSE-S3/SSE-C) — M7
+* No server-side encryption (SSE-S3/SSE-C) — M8.5
 * No object versioning, ACLs, IAM, lifecycle, replication, or erasure coding — out of scope
 
 See [docs/COMPATIBILITY_M6.md](docs/COMPATIBILITY_M6.md) for the tested client matrix and [docs/MILESTONES.md](docs/MILESTONES.md) for the full M7-M9 roadmap.
@@ -277,8 +282,11 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Key points:
 * **Compatibility**: Core 5 path-style matrix is tested in `:compatibility-test`;
   virtual-host addressing and `aws-chunked` streaming are recorded as
   unsupported detection rows.
+* **Security**: access keys are metadata-backed, lifecycle-managed, optionally
+  encrypted at rest, rate-limitable per key, and audited for mutating actions.
+  TLS should terminate outside the Ktor process.
 
 ## Next steps
 
-1. Start M7 security hardening before storing real user data.
-2. Add M8 backup/restore tooling before storing data anyone cares about.
+1. Add M8 backup/restore tooling before storing data anyone cares about.
+2. Add M8.5 object encryption at rest before M9 production sign-off.

@@ -18,6 +18,7 @@ import io.ktor.server.request.httpMethod
 import io.ktor.server.request.path
 import io.ktor.server.response.respond
 import io.ktor.server.response.respondText
+import app.silofs.auth.AuthenticatedAccessKeyIdKey
 import app.silofs.auth.SigV4Auth
 import app.silofs.common.RequestIds
 import app.silofs.common.S3ErrorCode
@@ -26,6 +27,7 @@ import app.silofs.common.s3Tag
 import app.silofs.common.s3XmlDocument
 import org.slf4j.LoggerFactory
 import org.slf4j.event.Level
+import java.net.URI
 
 /**
  * Wires all Ktor plugins. Status pages convert [S3Exception] into the standard
@@ -38,6 +40,8 @@ fun Application.installPlugins(config: ServerConfig) {
     install(RequestMetricsPlugin) {
         registry = config.requestMetrics
         operationalState = config.operationalState
+        database = config.database
+        repository = config.repository
     }
     install(CallLogging) {
         level = Level.INFO
@@ -55,10 +59,19 @@ fun Application.installPlugins(config: ServerConfig) {
     install(ContentNegotiation) {
         json()
     }
-    install(CORS) {
-        anyHost()
-        allowCredentials = true
-        allowNonSimpleContentTypes = true
+    if (config.securityConfig.corsAllowedOrigins.isNotEmpty()) {
+        install(CORS) {
+            config.securityConfig.corsAllowedOrigins.forEach { origin ->
+                if (origin == "*") {
+                    anyHost()
+                } else {
+                    val uri = URI(origin)
+                    allowHost(uri.host ?: origin, schemes = listOf(uri.scheme ?: "https"))
+                }
+            }
+            allowCredentials = true
+            allowNonSimpleContentTypes = true
+        }
     }
     install(PartialContent) {
         maxRangeCount = 1
@@ -70,6 +83,15 @@ fun Application.installPlugins(config: ServerConfig) {
         publicPaths = setOf("/healthz", "/readyz", "/metricsz")
         enabled = true
         maxClockSkewSeconds = config.sigv4MaxClockSkewSeconds
+        val limiter = AccessKeyRateLimiter(
+            rps = config.securityConfig.rateLimitPerAccessKeyRps,
+            burst = config.securityConfig.rateLimitPerAccessKeyBurst,
+        )
+        rateLimiter = { accessKeyId ->
+            limiter.allow(accessKeyId).also { allowed ->
+                if (!allowed) config.operationalState.recordRateLimitRejection()
+            }
+        }
     }
 
     install(StatusPages) {
@@ -103,7 +125,7 @@ fun Application.installPlugins(config: ServerConfig) {
             val body = s3XmlDocument("Error") {
                 s3Tag("Code", cause.errorCode.code)
                 s3Tag("Message", cause.message)
-                s3Tag("Resource", cause.resource ?: call.request.local.uri)
+                s3Tag("Resource", cause.resource ?: sanitizedRequestResource(call.request.local.uri))
                 s3Tag("RequestId", requestId)
             }
             val status = HttpStatusCode.fromValue(cause.errorCode.httpStatus)
@@ -119,10 +141,30 @@ fun Application.installPlugins(config: ServerConfig) {
             val body = s3XmlDocument("Error") {
                 s3Tag("Code", S3ErrorCode.InternalError.code)
                 s3Tag("Message", "We encountered an internal error. Please try again.")
-                s3Tag("Resource", call.request.local.uri)
+                s3Tag("Resource", sanitizedRequestResource(call.request.local.uri))
                 s3Tag("RequestId", requestId)
             }
             call.respondText(body, ContentType.Application.Xml.withCharset(Charsets.UTF_8), HttpStatusCode.InternalServerError)
         }
     }
 }
+
+internal fun sanitizedRequestResource(uri: String): String {
+    val qIndex = uri.indexOf('?')
+    if (qIndex < 0) return uri
+    val path = uri.substring(0, qIndex)
+    val query = uri.substring(qIndex + 1)
+    val redacted = query.split('&').filter { it.isNotBlank() }.joinToString("&") { pair ->
+        val key = pair.substringBefore('=')
+        val value = pair.substringAfter('=', "")
+        if (key.isSensitiveQueryKey()) "$key=REDACTED" else "$key=$value"
+    }
+    return if (redacted.isBlank()) path else "$path?$redacted"
+}
+
+private fun String.isSensitiveQueryKey(): Boolean =
+    equals("X-Amz-Signature", ignoreCase = true) ||
+        equals("X-Amz-Security-Token", ignoreCase = true) ||
+        equals("X-Amz-Credential", ignoreCase = true) ||
+        contains("token", ignoreCase = true) ||
+        contains("secret", ignoreCase = true)

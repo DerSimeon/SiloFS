@@ -178,9 +178,15 @@ SigV4 is implemented in the `auth` module and exposed as a Ktor
    compare.
 5. On mismatch, responds with the standard S3 `SignatureDoesNotMatch` XML.
 
-Credentials are loaded from an `AccessKey` table in Postgres so we can support
-multiple keys in tests. The initial milestone ships with a single static key
-configured via env vars.
+Credentials are loaded from `access_keys` in Postgres. Access-key lifecycle
+state is checked on every request, so disabling, deleting, or rotating a key
+takes effect without restarting the server. Secrets may be stored encrypted
+with AES-GCM when `S3_ACCESS_KEY_SECRET_ENCRYPTION_KEY` is configured; strict
+deployments can set `S3_REQUIRE_ENCRYPTED_SECRETS=true` to reject plaintext
+secret rows.
+
+Per-access-key rate limiting is optional. When configured, requests over the
+token bucket return S3 `SlowDown` and increment a metrics counter.
 
 ## 8. Operational concerns
 
@@ -208,6 +214,15 @@ configured via env vars.
 * Graceful shutdown flips the server into drain mode, stops accepting new work,
   waits for Ktor's configured quiet period and timeout, waits for in-flight
   accounting to reach zero, stops the recovery job, and closes the DB pool.
+* CORS is disabled by default. Operators must configure
+  `S3_CORS_ALLOWED_ORIGINS` to expose browser access.
+* Mutating S3 operations are written to `audit_events` with request id,
+  operation, access key id, bucket/key, status, and latency. Secrets,
+  Authorization headers, and presigned signatures are not stored.
+
+TLS is expected to terminate outside the Ktor process for now, such as at a
+reverse proxy, load balancer, or host-level TLS endpoint. Do not expose the
+plain HTTP listener directly on untrusted networks.
 
 ## 9. Compatibility envelope
 

@@ -21,6 +21,7 @@ internal data class MetricsSnapshot(
     val inFlightUploads: Int = 0,
     val inFlightMultipartCompletions: Int = 0,
     val rejectedRequests: Long = 0,
+    val rejectedRateLimitedRequests: Long = 0,
     val rejectedUploads: Long = 0,
     val rejectedMultipartCompletions: Long = 0,
     val dbPoolActiveConnections: Int? = null,
@@ -111,6 +112,7 @@ internal fun collectMetrics(config: ServerConfig): MetricsSnapshot {
         inFlightUploads = config.operationalState.inFlightUploads,
         inFlightMultipartCompletions = config.operationalState.inFlightMultipartCompletions,
         rejectedRequests = config.operationalState.rejectedRequests,
+        rejectedRateLimitedRequests = config.operationalState.rejectedRateLimitedRequests,
         rejectedUploads = config.operationalState.rejectedUploads,
         rejectedMultipartCompletions = config.operationalState.rejectedMultipartCompletions,
         dbPoolActiveConnections = poolStats?.activeConnections,
@@ -155,6 +157,9 @@ private fun StringBuilder.appendOperationalMetrics(snapshot: MetricsSnapshot) {
     append("# HELP silofs_rejected_requests_total Requests rejected because the server is draining.\n")
     append("# TYPE silofs_rejected_requests_total counter\n")
     append("silofs_rejected_requests_total ").append(snapshot.rejectedRequests).append('\n')
+    append("# HELP silofs_rejected_rate_limited_requests_total Requests rejected by the per-access-key rate limiter.\n")
+    append("# TYPE silofs_rejected_rate_limited_requests_total counter\n")
+    append("silofs_rejected_rate_limited_requests_total ").append(snapshot.rejectedRateLimitedRequests).append('\n')
     append("# HELP silofs_rejected_uploads_total Upload requests rejected by the upload concurrency limiter.\n")
     append("# TYPE silofs_rejected_uploads_total counter\n")
     append("silofs_rejected_uploads_total ").append(snapshot.rejectedUploads).append('\n')

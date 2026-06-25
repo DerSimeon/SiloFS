@@ -7,6 +7,7 @@ import io.ktor.server.application.createApplicationPlugin
 import io.ktor.server.request.httpMethod
 import io.ktor.server.request.path
 import io.ktor.server.request.queryString
+import io.ktor.util.AttributeKey
 import app.silofs.common.S3ErrorCode
 import app.silofs.common.S3Errors
 import app.silofs.common.S3Exception
@@ -232,7 +233,10 @@ class SigV4AuthConfig {
     var enabled: Boolean = true
     /** Maximum allowed clock skew in seconds (default 15 min, same as AWS). */
     var maxClockSkewSeconds: Long = 900L
+    var rateLimiter: ((String) -> Boolean)? = null
 }
+
+val AuthenticatedAccessKeyIdKey: AttributeKey<String> = AttributeKey("SilofsAuthenticatedAccessKeyId")
 
 val SigV4Auth: ApplicationPlugin<SigV4AuthConfig> = createApplicationPlugin(
     name = "SigV4Auth",
@@ -264,6 +268,7 @@ val SigV4Auth: ApplicationPlugin<SigV4AuthConfig> = createApplicationPlugin(
 
         val creds = config.credentialProvider.lookup(auth.accessKeyId)
             ?: throw S3Errors.invalidAccessKeyId(auth.accessKeyId)
+        enforceRateLimit(config, auth.accessKeyId)
 
         if (auth.region != config.region) {
             throw S3Errors.authorizationHeaderMalformed(
@@ -293,6 +298,13 @@ val SigV4Auth: ApplicationPlugin<SigV4AuthConfig> = createApplicationPlugin(
                     "Check your AWS Secret Access Key and signing method."
             )
         }
+        context.attributes.put(AuthenticatedAccessKeyIdKey, auth.accessKeyId)
+    }
+}
+
+private fun enforceRateLimit(config: SigV4AuthConfig, accessKeyId: String) {
+    if (config.rateLimiter?.invoke(accessKeyId) == false) {
+        throw S3Exception(S3ErrorCode.SlowDown, "Reduce your request rate")
     }
 }
 
@@ -367,6 +379,7 @@ private fun verifyPresignedUrl(
 
     val creds = config.credentialProvider.lookup(akid)
         ?: throw S3Errors.invalidAccessKeyId(akid)
+    enforceRateLimit(config, akid)
 
     if (region != config.region) {
         throw S3Errors.authorizationHeaderMalformed(
@@ -419,6 +432,7 @@ private fun verifyPresignedUrl(
                 "Check your AWS Secret Access Key and signing method."
         )
     }
+    context.attributes.put(AuthenticatedAccessKeyIdKey, akid)
 }
 
 private fun parseAmzDate(raw: String): java.time.Instant {

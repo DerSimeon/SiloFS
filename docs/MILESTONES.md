@@ -473,6 +473,8 @@ Known gaps at end of M6:
 
 Harden authentication, request validation, secret handling, and data protection.
 
+Status: complete for authentication/request hardening in the single-node envelope. Access keys now have lifecycle state, optional AES-GCM encrypted secret storage, DB-backed lookup without restart, per-access-key rate limiting, audit events for mutating operations, opt-in CORS, presigned query redaction, and documented TLS/security boundaries.
+
 Deliverables:
 
 - access key management
@@ -489,8 +491,8 @@ Deliverables:
 - rate limiting per access key
 - CORS policy per bucket if needed
 - TLS termination guidance
-- SSE-S3 encryption at rest if in scope
-- SSE-C if explicitly required
+- SSE-S3 encryption at rest if in scope: deferred to M8.5
+- SSE-C if explicitly required: deferred to M8.5
 - audit log of mutating operations
 - security review notes
 
@@ -512,8 +514,9 @@ Tests:
 
 Known gaps at end of M7:
 
-- any omitted security feature must be explicitly documented
-- unsupported AWS IAM, ACL, and bucket policy behavior must be clearly stated
+- no IAM, ACL, bucket policy, Object Lock, or lifecycle authorization engine
+- no SSE-S3/SSE-C until M8.5; use filesystem or block-device encryption before then
+- TLS is expected to terminate at a reverse proxy, load balancer, or host TLS layer
 
 ## Milestone 8 — backup, restore, and admin tooling
 
@@ -558,6 +561,31 @@ Known gaps at end of M8:
 - disaster recovery limits must be documented
 - unsupported online backup scenarios must be documented
 
+## Milestone 8.5 — encryption at rest
+
+Add explicit object encryption support before final production-readiness sign-off.
+
+Deliverables:
+
+- declare supported encryption mode: SSE-S3 first, SSE-C only if explicitly required
+- encrypted blob format with authenticated metadata
+- key management procedure for single-node deployments
+- checksum, range-read, copy, multipart, recovery, GC, backup, and restore compatibility
+- migration and rollback guidance for existing plaintext blobs
+- security review notes for encryption boundaries and residual plaintext metadata
+
+Tests:
+
+- encrypted PUT/GET/HEAD/range/copy/multipart roundtrip
+- recovery and GC with encrypted blobs
+- backup/restore with encrypted blobs
+- wrong/missing key failure modes
+
+Known gaps at end of M8.5:
+
+- any omitted encryption mode must be explicitly documented
+- external KMS integration remains out of scope unless selected before implementation
+
 ## Milestone 9 — production readiness review
 
 Final sign-off milestone. This does not add many features. It proves the system is safe enough for the declared deployment envelope.
@@ -581,6 +609,7 @@ Deliverables:
 - unsupported S3 features document
 - data corruption response procedure
 - incident response checklist
+- one-class-per-file rule enforced for new code and checked before sign-off
 
 Load and scale targets:
 
@@ -601,6 +630,24 @@ Exit criteria:
 - load tests meet declared targets
 - runbook is complete enough for an operator who did not write the system
 - all known gaps are documented
+
+## Milestone 10 — standalone CLI
+
+Provide a separate `silofs` operator/client CLI that can be built into an easy-to-deploy Linux binary, similar in spirit to `mc`, instead of requiring operators to invoke the server jar for admin workflows.
+
+Deliverables:
+
+- standalone CLI project outside the JVM server artifact
+- simple Linux binary build path
+- commands for admin inspection, access-key lifecycle, backup/restore verification, and basic S3-compatible object workflows
+- documented installation into a server `bin` directory
+- compatibility with the server's admin and S3 APIs without requiring local classpath access
+
+Tests:
+
+- CLI command parsing and output stability
+- integration tests against a local silofs server
+- binary build smoke test on Linux CI or container
 
 Production statement:
 

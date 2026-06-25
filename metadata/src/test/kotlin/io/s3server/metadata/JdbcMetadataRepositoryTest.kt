@@ -208,6 +208,76 @@ class JdbcMetadataRepositoryTest {
     }
 
     @Test
+    fun `access key lifecycle excludes disabled and deleted keys from auth lookup`() {
+        val (db, repo) = newRepo()
+        db.use {
+            it.withConnection { c ->
+                repo.upsertAccessKeyRecord(c, AccessKeyRecord("AKID", "secret", description = "test key"))
+                assertEquals("secret", repo.lookupSecret(c, "AKID"))
+                assertNotNull(repo.lookupAccessKey(c, "AKID"))
+
+                assertTrue(repo.updateAccessKeyState(c, "AKID", "DISABLED"))
+                assertNull(repo.lookupSecret(c, "AKID"))
+                assertNull(repo.lookupAccessKey(c, "AKID"))
+                val disabled = repo.listAccessKeys(c).single()
+                assertEquals("DISABLED", disabled.state)
+                assertNotNull(disabled.disabledAt)
+
+                assertTrue(repo.updateAccessKeyState(c, "AKID", "ACTIVE"))
+                assertNotNull(repo.lookupAccessKey(c, "AKID"))
+
+                assertTrue(repo.softDeleteAccessKey(c, "AKID"))
+                assertNull(repo.lookupAccessKey(c, "AKID"))
+                assertTrue(repo.listAccessKeys(c).isEmpty())
+                assertEquals("DELETED", repo.listAccessKeys(c, includeDeleted = true).single().state)
+            }
+        }
+    }
+
+    @Test
+    fun `encrypted access key material and audit events round trip`() {
+        val (db, repo) = newRepo()
+        db.use {
+            it.withConnection { c ->
+                repo.upsertAccessKeyRecord(
+                    c,
+                    AccessKeyRecord(
+                        accessKeyId = "AKID",
+                        secretAccessKey = null,
+                        secretCiphertext = byteArrayOf(1, 2, 3),
+                        secretNonce = byteArrayOf(4, 5, 6),
+                        secretKeyId = "test-key",
+                        description = "encrypted",
+                    )
+                )
+                val key = repo.lookupAccessKey(c, "AKID")!!
+                assertNull(key.secretAccessKey)
+                assertEquals("test-key", key.secretKeyId)
+                assertTrue(byteArrayOf(1, 2, 3).contentEquals(key.secretCiphertext))
+
+                repo.insertAuditEvent(
+                    c,
+                    AuditEventRecord(
+                        requestId = "req",
+                        accessKeyId = "AKID",
+                        operation = "PutObject",
+                        bucket = "b",
+                        objectKey = "k",
+                        status = 200,
+                        latencyMs = 12,
+                    )
+                )
+                val audit = repo.listAuditEvents(c).single()
+                assertEquals("PutObject", audit.operation)
+                assertEquals("AKID", audit.accessKeyId)
+                assertEquals("b", audit.bucket)
+                assertEquals("k", audit.objectKey)
+                assertEquals(200, audit.status)
+            }
+        }
+    }
+
+    @Test
     fun `multipart upload state transitions`() {
         val (db, repo) = newRepo()
         db.use {

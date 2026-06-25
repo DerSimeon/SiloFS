@@ -55,6 +55,7 @@ class OperationalState(
     private val rejectedUploadsCounter = LongAdder()
     private val rejectedMultipartCompletionsCounter = LongAdder()
     private val rejectedRequestsCounter = LongAdder()
+    private val rejectedRateLimitedRequestsCounter = LongAdder()
     private val blobStoreErrorsCounter = LongAdder()
     private val recoverySweepsCounter = LongAdder()
     private val recoverySweepFailuresCounter = LongAdder()
@@ -65,6 +66,7 @@ class OperationalState(
     val rejectedUploads: Long get() = rejectedUploadsCounter.sum()
     val rejectedMultipartCompletions: Long get() = rejectedMultipartCompletionsCounter.sum()
     val rejectedRequests: Long get() = rejectedRequestsCounter.sum()
+    val rejectedRateLimitedRequests: Long get() = rejectedRateLimitedRequestsCounter.sum()
     val blobStoreErrors: Long get() = blobStoreErrorsCounter.sum()
     val recoverySweeps: Long get() = recoverySweepsCounter.sum()
     val recoverySweepFailures: Long get() = recoverySweepFailuresCounter.sum()
@@ -129,5 +131,9 @@ class OperationalState(
     fun recordRecoverySweep(success: Boolean) {
         recoverySweepsCounter.increment()
         if (!success) recoverySweepFailuresCounter.increment()
+    }
+
+    fun recordRateLimitRejection() {
+        rejectedRateLimitedRequestsCounter.increment()
     }
 }

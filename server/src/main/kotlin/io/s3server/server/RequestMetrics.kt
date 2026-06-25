@@ -1,5 +1,9 @@
 package app.silofs.server
 
+import app.silofs.auth.AuthenticatedAccessKeyIdKey
+import app.silofs.metadata.AuditEventRecord
+import app.silofs.metadata.Database
+import app.silofs.metadata.JdbcMetadataRepository
 import io.ktor.http.HttpHeaders
 import io.ktor.server.application.ApplicationCallPipeline
 import io.ktor.server.application.ApplicationPlugin
@@ -22,6 +26,8 @@ private val accessLog = LoggerFactory.getLogger("AccessLog")
 class RequestMetricsConfig {
     lateinit var registry: RequestMetricsRegistry
     lateinit var operationalState: OperationalState
+    var database: Database? = null
+    var repository: JdbcMetadataRepository? = null
 }
 
 val RequestMetricsPlugin: ApplicationPlugin<RequestMetricsConfig> = createApplicationPlugin(
@@ -69,6 +75,16 @@ val RequestMetricsPlugin: ApplicationPlugin<RequestMetricsConfig> = createApplic
                     requestBytes,
                     responseBytes,
                 )
+                recordAuditEvent(
+                    database = pluginConfig.database,
+                    repository = pluginConfig.repository,
+                    operation = operation,
+                    callPath = call.request.path(),
+                    requestId = call.requestId(),
+                    accessKeyId = call.attributes.getOrNull(AuthenticatedAccessKeyIdKey),
+                    status = status,
+                    latencyMs = latencyNanos / 1_000_000,
+                )
             }
         } finally {
             if (call.attributes.getOrNull(callTrackedKey) == true) {
@@ -76,6 +92,64 @@ val RequestMetricsPlugin: ApplicationPlugin<RequestMetricsConfig> = createApplic
             }
         }
     }
+}
+
+private fun recordAuditEvent(
+    database: Database?,
+    repository: JdbcMetadataRepository?,
+    operation: String,
+    callPath: String,
+    requestId: String?,
+    accessKeyId: String?,
+    status: Int,
+    latencyMs: Long,
+) {
+    if (database == null || repository == null || !operation.isMutatingS3Operation()) return
+    val target = parseAuditTarget(callPath)
+    runCatching {
+        database.withConnection { conn ->
+            repository.insertAuditEvent(
+                conn,
+                AuditEventRecord(
+                    requestId = requestId,
+                    accessKeyId = accessKeyId,
+                    operation = operation,
+                    bucket = target.bucket,
+                    objectKey = target.key,
+                    status = status,
+                    latencyMs = latencyMs,
+                    source = "s3",
+                )
+            )
+        }
+    }.onFailure {
+        accessLog.warn("failed to insert audit event operation={} request_id={}", operation, requestId)
+    }
+}
+
+private fun String.isMutatingS3Operation(): Boolean =
+    this in setOf(
+        "CreateBucket",
+        "DeleteBucket",
+        "PutObject",
+        "DeleteObject",
+        "CopyObject",
+        "CreateMultipartUpload",
+        "UploadPart",
+        "UploadPartCopy",
+        "CompleteMultipartUpload",
+        "AbortMultipartUpload",
+    )
+
+private data class AuditTarget(val bucket: String?, val key: String?)
+
+private fun parseAuditTarget(path: String): AuditTarget {
+    val segments = path.trim('/').split('/').filter { it.isNotBlank() }
+    if (segments.isEmpty()) return AuditTarget(null, null)
+    return AuditTarget(
+        bucket = segments.first(),
+        key = segments.drop(1).takeIf { it.isNotEmpty() }?.joinToString("/"),
+    )
 }
 
 class RequestMetricsRegistry {

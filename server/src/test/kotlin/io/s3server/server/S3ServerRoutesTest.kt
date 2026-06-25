@@ -162,6 +162,7 @@ class S3ServerRoutesTest {
                     inFlightUploads = 7,
                     inFlightMultipartCompletions = 8,
                     rejectedRequests = 9,
+                    rejectedRateLimitedRequests = 19,
                     rejectedUploads = 10,
                     rejectedMultipartCompletions = 11,
                     dbPoolActiveConnections = 12,
@@ -183,6 +184,7 @@ class S3ServerRoutesTest {
         assertTrue(body.contains("silofs_inflight_uploads 7\n"))
         assertTrue(body.contains("silofs_inflight_multipart_completions 8\n"))
         assertTrue(body.contains("silofs_rejected_requests_total 9\n"))
+        assertTrue(body.contains("silofs_rejected_rate_limited_requests_total 19\n"))
         assertTrue(body.contains("silofs_rejected_uploads_total 10\n"))
         assertTrue(body.contains("silofs_rejected_multipart_completions_total 11\n"))
         assertTrue(body.contains("silofs_db_pool_active_connections 12\n"))
@@ -264,6 +266,57 @@ class S3ServerRoutesTest {
         assertEquals(1, state.rejectedRequests)
         state.finishRequest()
         assertTrue(state.awaitRequestDrain(timeoutMillis = 100))
+    }
+
+    @Test
+    fun `access key secret codec encrypts and decrypts with aad`() {
+        val key = ByteArray(32) { it.toByte() }
+        val codec = AccessKeySecretCodec(key, "test")
+        val encrypted = codec.encrypt("AKID", "secret")
+        assertFalse("secret".toByteArray().contentEquals(encrypted.ciphertext))
+        assertEquals("secret", codec.decrypt("AKID", encrypted.ciphertext, encrypted.nonce))
+        org.junit.jupiter.api.assertThrows<Exception> {
+            codec.decrypt("OTHER", encrypted.ciphertext, encrypted.nonce)
+        }
+    }
+
+    @Test
+    fun `security config validates encryption key size`() {
+        SecurityConfig(
+            secretEncryptionKey = ByteArray(32),
+            requireEncryptedSecrets = true,
+            corsAllowedOrigins = emptyList(),
+            rateLimitPerAccessKeyRps = 0,
+            rateLimitPerAccessKeyBurst = 64,
+        )
+        org.junit.jupiter.api.assertThrows<IllegalArgumentException> {
+            SecurityConfig(
+                secretEncryptionKey = ByteArray(16),
+                requireEncryptedSecrets = false,
+                corsAllowedOrigins = emptyList(),
+                rateLimitPerAccessKeyRps = 0,
+                rateLimitPerAccessKeyBurst = 64,
+            )
+        }
+    }
+
+    @Test
+    fun `access key rate limiter rejects over burst`() {
+        val limiter = AccessKeyRateLimiter(rps = 1, burst = 1)
+        assertTrue(limiter.allow("AKID"))
+        assertFalse(limiter.allow("AKID"))
+        assertTrue(limiter.allow("OTHER"))
+    }
+
+    @Test
+    fun `sanitized request resource redacts presigned secrets`() {
+        val sanitized = sanitizedRequestResource(
+            "/bucket/key?X-Amz-Credential=AKID%2Fscope&X-Amz-Signature=abcdef&prefix=ok&token=secret"
+        )
+        assertEquals(
+            "/bucket/key?X-Amz-Credential=REDACTED&X-Amz-Signature=REDACTED&prefix=ok&token=REDACTED",
+            sanitized,
+        )
     }
 
     @Test

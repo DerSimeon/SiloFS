@@ -26,6 +26,7 @@ data class ServerConfig(
     val operationalConfig: OperationalConfig = OperationalConfig.fromEnv(),
     val operationalState: OperationalState = OperationalState(operationalConfig),
     val requestMetrics: RequestMetricsRegistry = RequestMetricsRegistry(),
+    val securityConfig: SecurityConfig = SecurityConfig.fromEnv(),
     val sigv4MaxClockSkewSeconds: Long = 900L
 ) {
     companion object {
@@ -40,16 +41,25 @@ data class ServerConfig(
             val accessKeyId = envOrDefault("S3_ACCESS_KEY_ID", "AKIAIOSFODNN7EXAMPLE")
             val secretAccessKey = envOrDefault("S3_SECRET_ACCESS_KEY", "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY")
             val maxClockSkew = envLong("S3_SIGV4_MAX_CLOCK_SKEW_SECONDS", 900L)
+            val securityConfig = SecurityConfig.fromEnv()
 
             val database = Database.fromUrl(dbUrl, dbUser, dbPass)
             val repo = JdbcMetadataRepository()
             // Seed the access key row so the auth layer can look it up.
             database.withConnection { c ->
-                repo.upsertAccessKey(c, accessKeyId, secretAccessKey, "default env-provided key")
+                repo.upsertAccessKeyRecord(
+                    c,
+                    accessKeyRecordForSecret(
+                        accessKeyId = accessKeyId,
+                        secret = secretAccessKey,
+                        description = "default env-provided key",
+                        securityConfig = securityConfig,
+                    )
+                )
             }
 
             val blobStore = FsBlobStore(dataDir)
-            val credentialProvider = StaticCredentialProvider.single(accessKeyId, secretAccessKey)
+            val credentialProvider = DatabaseCredentialProvider(database, repo, securityConfig)
 
             return ServerConfig(
                 bindHost = host,
@@ -62,6 +72,7 @@ data class ServerConfig(
                 credentialProvider = credentialProvider,
                 recoveryConfig = RecoveryConfig.fromEnv(),
                 operationalConfig = OperationalConfig.fromEnv(),
+                securityConfig = securityConfig,
                 sigv4MaxClockSkewSeconds = maxClockSkew
             )
         }

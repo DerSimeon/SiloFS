@@ -2,12 +2,13 @@ package app.silofs.test
 
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.netty.Netty
-import app.silofs.auth.StaticCredentialProvider
 import app.silofs.blob.FsBlobStore
 import app.silofs.blob.RecoveryJob
 import app.silofs.metadata.Database
 import app.silofs.metadata.JdbcMetadataRepository
+import app.silofs.server.DatabaseCredentialProvider
 import app.silofs.server.ServerConfig
+import app.silofs.server.SecurityConfig
 import app.silofs.server.s3Module
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.AfterAll
@@ -63,7 +64,14 @@ abstract class AbstractS3ServerTest {
         val repo = JdbcMetadataRepository()
         db.withConnection { c -> repo.upsertAccessKey(c, ACCESS_KEY, SECRET_KEY, "test key") }
         val blobStore = FsBlobStore(dataDir)
-        val credentialProvider = StaticCredentialProvider.single(ACCESS_KEY, SECRET_KEY)
+        val securityConfig = SecurityConfig(
+            secretEncryptionKey = null,
+            requireEncryptedSecrets = false,
+            corsAllowedOrigins = emptyList(),
+            rateLimitPerAccessKeyRps = 0,
+            rateLimitPerAccessKeyBurst = 64,
+        )
+        val credentialProvider = DatabaseCredentialProvider(db, repo, securityConfig)
         val config = ServerConfig(
             bindHost = "127.0.0.1",
             bindPort = 0,
@@ -73,6 +81,7 @@ abstract class AbstractS3ServerTest {
             blobStore = blobStore,
             repository = repo,
             credentialProvider = credentialProvider,
+            securityConfig = securityConfig,
             recoveryConfig = app.silofs.server.RecoveryConfig(
                 tempMaxAgeSeconds = 1,
                 multipartMaxAgeSeconds = 1,

@@ -139,9 +139,78 @@ interface MetadataRepository {
     // Access keys
     fun upsertAccessKey(conn: Connection, accessKeyId: String, secretAccessKey: String, description: String?)
     fun lookupSecret(conn: Connection, accessKeyId: String): String?
+    fun upsertAccessKeyRecord(conn: Connection, record: AccessKeyRecord)
+    fun lookupAccessKey(conn: Connection, accessKeyId: String): AccessKeyRecord?
+    fun listAccessKeys(conn: Connection, includeDeleted: Boolean = false): List<AccessKeyRecord>
+    fun updateAccessKeyState(conn: Connection, accessKeyId: String, state: String): Boolean
+    fun softDeleteAccessKey(conn: Connection, accessKeyId: String): Boolean
+    fun insertAuditEvent(conn: Connection, event: AuditEventRecord)
+    fun listAuditEvents(conn: Connection, limit: Int = 100): List<AuditEventRecord>
 }
 
 data class StaleMultipart(val uploadId: String, val bucket: String, val key: String, val initiatedAt: Instant)
+
+data class AccessKeyRecord(
+    val accessKeyId: String,
+    val secretAccessKey: String?,
+    val secretCiphertext: ByteArray? = null,
+    val secretNonce: ByteArray? = null,
+    val secretKeyId: String? = null,
+    val description: String? = null,
+    val state: String = "ACTIVE",
+    val createdAt: Instant? = null,
+    val updatedAt: Instant? = null,
+    val disabledAt: Instant? = null,
+    val deletedAt: Instant? = null,
+    val rotatedAt: Instant? = null,
+) {
+    override fun equals(other: Any?): Boolean {
+        if (this === other) return true
+        if (other !is AccessKeyRecord) return false
+        return accessKeyId == other.accessKeyId &&
+            secretAccessKey == other.secretAccessKey &&
+            secretCiphertext.contentEqualsNullable(other.secretCiphertext) &&
+            secretNonce.contentEqualsNullable(other.secretNonce) &&
+            secretKeyId == other.secretKeyId &&
+            description == other.description &&
+            state == other.state &&
+            createdAt == other.createdAt &&
+            updatedAt == other.updatedAt &&
+            disabledAt == other.disabledAt &&
+            deletedAt == other.deletedAt &&
+            rotatedAt == other.rotatedAt
+    }
+
+    override fun hashCode(): Int {
+        var result = accessKeyId.hashCode()
+        result = 31 * result + (secretAccessKey?.hashCode() ?: 0)
+        result = 31 * result + (secretCiphertext?.contentHashCode() ?: 0)
+        result = 31 * result + (secretNonce?.contentHashCode() ?: 0)
+        result = 31 * result + (secretKeyId?.hashCode() ?: 0)
+        result = 31 * result + (description?.hashCode() ?: 0)
+        result = 31 * result + state.hashCode()
+        result = 31 * result + (createdAt?.hashCode() ?: 0)
+        result = 31 * result + (updatedAt?.hashCode() ?: 0)
+        result = 31 * result + (disabledAt?.hashCode() ?: 0)
+        result = 31 * result + (deletedAt?.hashCode() ?: 0)
+        result = 31 * result + (rotatedAt?.hashCode() ?: 0)
+        return result
+    }
+}
+
+data class AuditEventRecord(
+    val eventId: UUID = UUID.randomUUID(),
+    val occurredAt: Instant? = null,
+    val requestId: String?,
+    val accessKeyId: String?,
+    val operation: String,
+    val bucket: String? = null,
+    val objectKey: String? = null,
+    val status: Int? = null,
+    val latencyMs: Long? = null,
+    val source: String = "s3",
+    val detailJson: String = "{}",
+)
 
 /** Full info about a multipart upload, used by CreateMultipartUpload and ListMultipartUploads. */
 data class MultipartUploadInfo(
@@ -751,24 +820,180 @@ class JdbcMetadataRepository : MetadataRepository {
     }
 
     override fun upsertAccessKey(conn: Connection, accessKeyId: String, secretAccessKey: String, description: String?) {
+        upsertAccessKeyRecord(
+            conn,
+            AccessKeyRecord(
+                accessKeyId = accessKeyId,
+                secretAccessKey = secretAccessKey,
+                description = description,
+                state = "ACTIVE",
+            )
+        )
+    }
+
+    override fun lookupSecret(conn: Connection, accessKeyId: String): String? =
         conn.prepareStatement(
-            "INSERT INTO access_keys(access_key_id, secret_access_key, description) " +
-                "VALUES (?, ?, ?) ON CONFLICT (access_key_id) DO UPDATE SET " +
-                "secret_access_key = EXCLUDED.secret_access_key, description = EXCLUDED.description"
+            "SELECT secret_access_key FROM access_keys " +
+                "WHERE access_key_id = ? AND state = 'ACTIVE' AND deleted_at IS NULL"
         ).use { ps ->
             ps.setString(1, accessKeyId)
-            ps.setString(2, secretAccessKey)
-            ps.setString(3, description)
+            ps.executeQuery().use { rs -> if (rs.next()) rs.getString(1) else null }
+        }
+
+    override fun upsertAccessKeyRecord(conn: Connection, record: AccessKeyRecord) {
+        conn.prepareStatement(
+            "INSERT INTO access_keys(" +
+                "access_key_id, secret_access_key, secret_ciphertext, secret_nonce, secret_key_id, " +
+                "description, state, updated_at, disabled_at, deleted_at, rotated_at" +
+                ") VALUES (?, ?, ?, ?, ?, ?, ?, now(), ?, ?, ?) " +
+                "ON CONFLICT (access_key_id) DO UPDATE SET " +
+                "secret_access_key = EXCLUDED.secret_access_key, " +
+                "secret_ciphertext = EXCLUDED.secret_ciphertext, " +
+                "secret_nonce = EXCLUDED.secret_nonce, " +
+                "secret_key_id = EXCLUDED.secret_key_id, " +
+                "description = EXCLUDED.description, " +
+                "state = EXCLUDED.state, " +
+                "updated_at = now(), " +
+                "disabled_at = EXCLUDED.disabled_at, " +
+                "deleted_at = EXCLUDED.deleted_at, " +
+                "rotated_at = COALESCE(EXCLUDED.rotated_at, access_keys.rotated_at)"
+        ).use { ps ->
+            ps.setString(1, record.accessKeyId)
+            ps.setString(2, record.secretAccessKey)
+            ps.setBytes(3, record.secretCiphertext)
+            ps.setBytes(4, record.secretNonce)
+            ps.setString(5, record.secretKeyId)
+            ps.setString(6, record.description)
+            ps.setString(7, record.state)
+            ps.setTimestamp(8, record.disabledAt?.let { Timestamp.from(it) })
+            ps.setTimestamp(9, record.deletedAt?.let { Timestamp.from(it) })
+            ps.setTimestamp(10, record.rotatedAt?.let { Timestamp.from(it) })
             ps.executeUpdate()
         }
     }
 
-    override fun lookupSecret(conn: Connection, accessKeyId: String): String? =
-        conn.prepareStatement("SELECT secret_access_key FROM access_keys WHERE access_key_id = ?").use { ps ->
+    override fun lookupAccessKey(conn: Connection, accessKeyId: String): AccessKeyRecord? =
+        conn.prepareStatement(
+            "SELECT access_key_id, secret_access_key, secret_ciphertext, secret_nonce, secret_key_id, " +
+                "description, state, created_at, updated_at, disabled_at, deleted_at, rotated_at " +
+                "FROM access_keys WHERE access_key_id = ? AND state = 'ACTIVE' AND deleted_at IS NULL"
+        ).use { ps ->
             ps.setString(1, accessKeyId)
-            ps.executeQuery().use { rs -> if (rs.next()) rs.getString(1) else null }
+            ps.executeQuery().use { rs -> if (rs.next()) rs.toAccessKeyRecord() else null }
+        }
+
+    override fun listAccessKeys(conn: Connection, includeDeleted: Boolean): List<AccessKeyRecord> {
+        val sql = "SELECT access_key_id, secret_access_key, secret_ciphertext, secret_nonce, secret_key_id, " +
+            "description, state, created_at, updated_at, disabled_at, deleted_at, rotated_at " +
+            "FROM access_keys " +
+            (if (includeDeleted) "" else "WHERE deleted_at IS NULL ") +
+            "ORDER BY created_at, access_key_id"
+        return conn.prepareStatement(sql).use { ps ->
+            ps.executeQuery().use { rs ->
+                buildList {
+                    while (rs.next()) add(rs.toAccessKeyRecord())
+                }
+            }
+        }
+    }
+
+    override fun updateAccessKeyState(conn: Connection, accessKeyId: String, state: String): Boolean {
+        val now = Timestamp.from(Instant.now())
+        val disabledAt = if (state == "DISABLED") "disabled_at = COALESCE(disabled_at, ?), " else "disabled_at = NULL, "
+        return conn.prepareStatement(
+            "UPDATE access_keys SET state = ?, updated_at = now(), $disabledAt deleted_at = NULL " +
+                "WHERE access_key_id = ? AND deleted_at IS NULL"
+        ).use { ps ->
+            ps.setString(1, state)
+            var i = 2
+            if (state == "DISABLED") ps.setTimestamp(i++, now)
+            ps.setString(i, accessKeyId)
+            ps.executeUpdate() > 0
+        }
+    }
+
+    override fun softDeleteAccessKey(conn: Connection, accessKeyId: String): Boolean =
+        conn.prepareStatement(
+            "UPDATE access_keys SET state = 'DELETED', deleted_at = COALESCE(deleted_at, now()), updated_at = now() " +
+                "WHERE access_key_id = ? AND deleted_at IS NULL"
+        ).use { ps ->
+            ps.setString(1, accessKeyId)
+            ps.executeUpdate() > 0
+        }
+
+    override fun insertAuditEvent(conn: Connection, event: AuditEventRecord) {
+        conn.prepareStatement(
+            "INSERT INTO audit_events(" +
+                "event_id, request_id, access_key_id, operation, bucket, object_key, status, latency_ms, source, detail" +
+                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb)"
+        ).use { ps ->
+            ps.setObject(1, event.eventId)
+            ps.setString(2, event.requestId)
+            ps.setString(3, event.accessKeyId)
+            ps.setString(4, event.operation)
+            ps.setString(5, event.bucket)
+            ps.setString(6, event.objectKey)
+            if (event.status == null) ps.setNull(7, java.sql.Types.INTEGER) else ps.setInt(7, event.status)
+            if (event.latencyMs == null) ps.setNull(8, java.sql.Types.BIGINT) else ps.setLong(8, event.latencyMs)
+            ps.setString(9, event.source)
+            ps.setString(10, event.detailJson.ifBlank { "{}" })
+            ps.executeUpdate()
+        }
+    }
+
+    override fun listAuditEvents(conn: Connection, limit: Int): List<AuditEventRecord> =
+        conn.prepareStatement(
+            "SELECT event_id, occurred_at, request_id, access_key_id, operation, bucket, object_key, " +
+                "status, latency_ms, source, detail::text AS detail_json " +
+                "FROM audit_events ORDER BY occurred_at DESC LIMIT ?"
+        ).use { ps ->
+            ps.setInt(1, limit.coerceIn(1, 10_000))
+            ps.executeQuery().use { rs ->
+                buildList {
+                    while (rs.next()) {
+                        add(
+                            AuditEventRecord(
+                                eventId = rs.getObject("event_id", UUID::class.java),
+                                occurredAt = rs.getTimestamp("occurred_at").toInstant(),
+                                requestId = rs.getString("request_id"),
+                                accessKeyId = rs.getString("access_key_id"),
+                                operation = rs.getString("operation"),
+                                bucket = rs.getString("bucket"),
+                                objectKey = rs.getString("object_key"),
+                                status = rs.getObject("status") as? Int,
+                                latencyMs = rs.getObject("latency_ms") as? Long,
+                                source = rs.getString("source"),
+                                detailJson = rs.getString("detail_json") ?: "{}",
+                            )
+                        )
+                    }
+                }
+            }
         }
 }
+
+private fun ByteArray?.contentEqualsNullable(other: ByteArray?): Boolean =
+    when {
+        this == null && other == null -> true
+        this == null || other == null -> false
+        else -> contentEquals(other)
+    }
+
+private fun ResultSet.toAccessKeyRecord(): AccessKeyRecord =
+    AccessKeyRecord(
+        accessKeyId = getString("access_key_id"),
+        secretAccessKey = getString("secret_access_key"),
+        secretCiphertext = getBytes("secret_ciphertext"),
+        secretNonce = getBytes("secret_nonce"),
+        secretKeyId = getString("secret_key_id"),
+        description = getString("description"),
+        state = getString("state"),
+        createdAt = getTimestamp("created_at").toInstant(),
+        updatedAt = getTimestamp("updated_at").toInstant(),
+        disabledAt = getTimestamp("disabled_at")?.toInstant(),
+        deletedAt = getTimestamp("deleted_at")?.toInstant(),
+        rotatedAt = getTimestamp("rotated_at")?.toInstant(),
+    )
 
 private fun PreparedStatement.applyObjectMeta(meta: ObjectMetadata) {
     var i = 1
