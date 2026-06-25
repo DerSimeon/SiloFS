@@ -567,6 +567,12 @@ Known gaps at end of M8:
 
 Add explicit object encryption support before final production-readiness sign-off.
 
+Status: complete for local single-node SSE-S3. New blobs can be transparently
+encrypted with AES-GCM using operator-supplied local key material. Existing
+plaintext blobs remain readable, encrypted blobs are authenticated during read
+and consistency checks, and unsupported SSE-C/SSE-KMS modes are rejected with
+S3-shaped errors.
+
 Deliverables:
 
 - declare supported encryption mode: SSE-S3 first, SSE-C only if explicitly required
@@ -585,8 +591,10 @@ Tests:
 
 Known gaps at end of M8.5:
 
-- any omitted encryption mode must be explicitly documented
-- external KMS integration remains out of scope unless selected before implementation
+- SSE-C, SSE-KMS, and external KMS integration are unsupported
+- online bulk re-encryption of historical plaintext blobs is not implemented
+- operators must back up `S3_OBJECT_ENCRYPTION_MASTER_KEY`; losing it makes
+  encrypted blobs unrecoverable
 
 ## Milestone 9 — production readiness review
 

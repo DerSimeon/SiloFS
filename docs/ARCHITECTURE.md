@@ -98,13 +98,16 @@ matters; every step is idempotent from the recovery job's perspective.
    memory.
 3. When the upload completes, `fsync` the temp file's data and the parent
    directory. This is the durability boundary.
-4. Atomically rename `<tmp>` to `<blob-dir>/objects/sha256[0:2]/sha256[2:4]/sha256`
+4. If `S3_OBJECT_ENCRYPTION_MODE=sse-s3`, encrypt the fsynced temp file into
+   a second temp file using AES-GCM with authenticated header metadata
+   (format version, plaintext SHA-256, plaintext size, and key id).
+5. Atomically rename `<tmp>` to `<blob-dir>/objects/sha256[0:2]/sha256[2:4]/sha256`
    — content-addressed so duplicate uploads deduplicate on disk (but each
    object still has its own metadata row).
-5. Insert a `blob_write_intents` row after fsync computes the SHA-256 and
+6. Insert a `blob_write_intents` row after fsync computes the SHA-256 and
    before the final rename. This intent is a durable DB reference for the
    otherwise-dangerous window between filesystem publish and metadata commit.
-6. Insert the `objects` row and clear that exact write intent inside a single
+7. Insert the `objects` row and clear that exact write intent inside a single
    Postgres transaction. If the insert fails, the blob is left in place only
    until the failed request clears its intent or recovery later expires a stale
    intent and garbage-collects the unreferenced blob.
@@ -161,8 +164,23 @@ crashing mid-sweep is safe — every step is idempotent.
 
 For operator inspection, `silofs admin check-blobs` runs a read-only
 consistency check that reports live DB references whose content-addressed blob
-is missing, content blobs with no live DB reference, and quarantined blobs.
+is missing, content blobs with no live DB reference, quarantined blobs, and
+corrupt blobs whose decrypted plaintext SHA-256 or size does not match metadata.
 `silofs admin recover-once` runs the same recovery sweep once and exits.
+
+## 6.5. Object encryption
+
+Object encryption is transparent SSE-S3-style encryption for local blobs. When
+enabled, successful new object and multipart-part publishes store encrypted blob
+bytes at the existing plaintext-SHA content-addressed path. Reads sniff the blob
+header: plaintext legacy blobs are streamed directly, encrypted blobs are
+authenticated and decrypted before GET, HEAD size calculation, range reads,
+CopyObject, UploadPartCopy, checksum verification, and consistency checks.
+
+The encryption master key is local single-node key material supplied through
+`S3_OBJECT_ENCRYPTION_MASTER_KEY`. Operators must back it up with the metadata
+and blob backup set. Losing the key makes encrypted blobs unrecoverable. SSE-C,
+SSE-KMS, and external KMS are intentionally unsupported in M8.5.
 
 ## 7. Authentication
 

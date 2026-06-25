@@ -246,7 +246,10 @@ class MultipartHandlers(
                         checksumCrc32 = checksumCrc32,
                         checksumCrc32C = checksumCrc32C,
                         checksumSha1 = checksumSha1,
-                        checksumSha256 = effectiveChecksumSha256
+                        checksumSha256 = effectiveChecksumSha256,
+                        encryptionMode = stored.encryptionMode,
+                        encryptionKeyId = stored.encryptionKeyId,
+                        encryptionNonce = stored.encryptionNonce
                     )
                     repo.clearBlobWriteIntent(conn, intentId)
                 }
@@ -419,7 +422,10 @@ class MultipartHandlers(
                     userMetadata = mpu.userMetadata,
                     versionId = "null",
                     storageClass = mpu.storageClass,
-                    createdAt = Instant.now()
+                    createdAt = Instant.now(),
+                    encryptionMode = stored.encryptionMode,
+                    encryptionKeyId = stored.encryptionKeyId,
+                    encryptionNonce = stored.encryptionNonce
                 )
 
                 // ---- Atomic commit: object row + mark COMPLETED + delete parts ----
@@ -731,7 +737,14 @@ class MultipartHandlers(
                         blobPath = stored.blobPath.toString(),
                         blobSha256Hex = stored.sha256Hex,
                         etag = etag,
-                        sizeBytes = stored.sizeBytes
+                        sizeBytes = stored.sizeBytes,
+                        checksumCrc32 = null,
+                        checksumCrc32C = null,
+                        checksumSha1 = null,
+                        checksumSha256 = null,
+                        encryptionMode = stored.encryptionMode,
+                        encryptionKeyId = stored.encryptionKeyId,
+                        encryptionNonce = stored.encryptionNonce
                     )
                     repo.clearBlobWriteIntent(conn, copyIntentId)
                 }

@@ -11,6 +11,8 @@ Prerequisites on the operator host:
 - `pg_dump`
 - `rsync` preferred, `cp` fallback
 - read access to `S3_DATA_DIR`
+- if object encryption is enabled, access to the exact
+  `S3_OBJECT_ENCRYPTION_MASTER_KEY` value used by the server
 
 ```bash
 export SILOFS_PG_URI='postgres://silofs:silofs@localhost:5432/silofs'
@@ -26,6 +28,11 @@ The script writes:
 - `blobs/objects`: content-addressed object blobs, copied incrementally
 - `blobs/.quarantine`: quarantined blobs if present
 - `manifest.json`: backup metadata for verification
+
+If `S3_OBJECT_ENCRYPTION_MODE=sse-s3`, store the base64
+`S3_OBJECT_ENCRYPTION_MASTER_KEY` in your secret manager or offline key escrow
+with the same retention as the backup. The backup manifest does not contain the
+key. Losing the key makes encrypted blobs unrecoverable.
 
 ## Restore
 
@@ -47,7 +54,9 @@ silofs admin check-blobs
 ```
 
 Verification fails if any live metadata row references a missing blob. Orphan
-and quarantined blobs are reported for operator review.
+and quarantined blobs are reported for operator review. For encrypted blobs,
+verification also decrypts and authenticates the blob and checks plaintext
+SHA-256 and size against metadata.
 
 ## Admin commands
 

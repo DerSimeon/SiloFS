@@ -5,9 +5,11 @@ import app.silofs.auth.CredentialProvider
 import app.silofs.auth.StaticCredentialProvider
 import app.silofs.blob.BlobStore
 import app.silofs.blob.FsBlobStore
+import app.silofs.blob.ObjectEncryption
 import app.silofs.metadata.Database
 import app.silofs.metadata.JdbcMetadataRepository
 import java.nio.file.Path
+import java.util.Base64
 
 /**
  * Top-level server config. Built once from env vars (or defaults) and passed
@@ -27,6 +29,7 @@ data class ServerConfig(
     val operationalState: OperationalState = OperationalState(operationalConfig),
     val requestMetrics: RequestMetricsRegistry = RequestMetricsRegistry(),
     val securityConfig: SecurityConfig = SecurityConfig.fromEnv(),
+    val objectEncryptionConfig: ObjectEncryptionConfig = ObjectEncryptionConfig.fromEnv(),
     val sigv4MaxClockSkewSeconds: Long = 900L
 ) {
     companion object {
@@ -42,6 +45,7 @@ data class ServerConfig(
             val secretAccessKey = envOrDefault("S3_SECRET_ACCESS_KEY", "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY")
             val maxClockSkew = envLong("S3_SIGV4_MAX_CLOCK_SKEW_SECONDS", 900L)
             val securityConfig = SecurityConfig.fromEnv()
+            val objectEncryptionConfig = ObjectEncryptionConfig.fromEnv()
 
             val database = Database.fromUrl(dbUrl, dbUser, dbPass)
             val repo = JdbcMetadataRepository()
@@ -58,7 +62,7 @@ data class ServerConfig(
                 )
             }
 
-            val blobStore = FsBlobStore(dataDir)
+            val blobStore = FsBlobStore(dataDir, objectEncryptionConfig.encryption)
             val credentialProvider = DatabaseCredentialProvider(database, repo, securityConfig)
 
             return ServerConfig(
@@ -73,6 +77,7 @@ data class ServerConfig(
                 recoveryConfig = RecoveryConfig.fromEnv(),
                 operationalConfig = OperationalConfig.fromEnv(),
                 securityConfig = securityConfig,
+                objectEncryptionConfig = objectEncryptionConfig,
                 sigv4MaxClockSkewSeconds = maxClockSkew
             )
         }
@@ -82,6 +87,45 @@ data class ServerConfig(
 
         private fun envLong(name: String, default: Long): Long =
             System.getenv(name)?.toLongOrNull() ?: default
+    }
+}
+
+data class ObjectEncryptionConfig(
+    val mode: String,
+    val encryption: ObjectEncryption?,
+    val requireObjectEncryption: Boolean,
+) {
+    val isEnabled: Boolean
+        get() = mode == MODE_SSE_S3
+
+    companion object {
+        const val MODE_DISABLED = "disabled"
+        const val MODE_SSE_S3 = "sse-s3"
+
+        fun fromEnv(): ObjectEncryptionConfig {
+            val mode = envOrDefault("S3_OBJECT_ENCRYPTION_MODE", MODE_DISABLED).lowercase()
+            val require = envOrDefault("S3_REQUIRE_OBJECT_ENCRYPTION", "false").toBoolean()
+            if (mode !in setOf(MODE_DISABLED, MODE_SSE_S3)) {
+                throw IllegalArgumentException("S3_OBJECT_ENCRYPTION_MODE must be disabled or sse-s3")
+            }
+            if (require && mode != MODE_SSE_S3) {
+                throw IllegalArgumentException("S3_REQUIRE_OBJECT_ENCRYPTION=true requires S3_OBJECT_ENCRYPTION_MODE=sse-s3")
+            }
+            val encryption = if (mode == MODE_SSE_S3) {
+                val raw = envOrDefault("S3_OBJECT_ENCRYPTION_MASTER_KEY", "")
+                if (raw.isBlank()) {
+                    throw IllegalArgumentException("S3_OBJECT_ENCRYPTION_MASTER_KEY is required when object encryption is enabled")
+                }
+                val key = Base64.getDecoder().decode(raw)
+                ObjectEncryption(key)
+            } else {
+                null
+            }
+            return ObjectEncryptionConfig(mode, encryption, require)
+        }
+
+        private fun envOrDefault(name: String, default: String): String =
+            System.getenv(name)?.takeIf { it.isNotBlank() } ?: default
     }
 }
 

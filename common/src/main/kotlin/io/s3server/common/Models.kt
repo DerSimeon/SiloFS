@@ -30,7 +30,10 @@ data class ObjectMetadata(
     val checksumCrc32C: String? = null,
     val checksumSha1: String? = null,
     val checksumSha256: String? = null,
-    val checksumType: String? = null
+    val checksumType: String? = null,
+    val encryptionMode: String? = null,
+    val encryptionKeyId: String? = null,
+    val encryptionNonce: ByteArray? = null
 )
 
 data class BucketInfo(

@@ -22,6 +22,9 @@ data class StoredBlob(
     val sha256Hex: String,
     val md5: ByteArray,
     val sizeBytes: Long,
+    val encryptionMode: String? = null,
+    val encryptionKeyId: String? = null,
+    val encryptionNonce: ByteArray? = null,
 ) {
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
@@ -29,7 +32,10 @@ data class StoredBlob(
         return blobPath == other.blobPath &&
             sha256Hex == other.sha256Hex &&
             sizeBytes == other.sizeBytes &&
-            md5.contentEquals(other.md5)
+            md5.contentEquals(other.md5) &&
+            encryptionMode == other.encryptionMode &&
+            encryptionKeyId == other.encryptionKeyId &&
+            encryptionNonce.contentEqualsNullable(other.encryptionNonce)
     }
 
     override fun hashCode(): Int {
@@ -37,9 +43,19 @@ data class StoredBlob(
         result = 31 * result + sha256Hex.hashCode()
         result = 31 * result + md5.contentHashCode()
         result = 31 * result + sizeBytes.hashCode()
+        result = 31 * result + (encryptionMode?.hashCode() ?: 0)
+        result = 31 * result + (encryptionKeyId?.hashCode() ?: 0)
+        result = 31 * result + (encryptionNonce?.contentHashCode() ?: 0)
         return result
     }
 }
+
+private fun ByteArray?.contentEqualsNullable(other: ByteArray?): Boolean =
+    when {
+        this == null && other == null -> true
+        this == null || other == null -> false
+        else -> contentEquals(other)
+    }
 
 /**
  * A streaming write into the blob store. Use [write] to push bytes, then [commit]
@@ -129,6 +145,7 @@ interface BlobStore {
  */
 class FsBlobStore(
     val dataDir: Path,
+    private val encryption: ObjectEncryption? = null,
 ) : BlobStore {
     private val tmpDir: Path = dataDir.resolve(".tmp")
     private val objectsDir: Path = dataDir.resolve("objects")
@@ -142,7 +159,13 @@ class FsBlobStore(
 
     override fun beginWrite(expectedSha256Hex: String?): BlobWrite = FsBlobWrite(this, expectedSha256Hex)
 
-    override fun openRead(blobPath: Path): FileChannel = FileChannel.open(blobPath, StandardOpenOption.READ)
+    override fun openRead(blobPath: Path): FileChannel =
+        if (ObjectEncryption.isEncryptedBlob(blobPath)) {
+            requireNotNull(encryption) { "encrypted blob requires S3_OBJECT_ENCRYPTION_MASTER_KEY" }
+                .openDecryptedChannel(blobPath)
+        } else {
+            FileChannel.open(blobPath, StandardOpenOption.READ)
+        }
 
     override fun openRead(
         blobPath: Path,
@@ -153,7 +176,12 @@ class FsBlobStore(
         return ch
     }
 
-    override fun sizeOf(blobPath: Path): Long = Files.size(blobPath)
+    override fun sizeOf(blobPath: Path): Long =
+        if (ObjectEncryption.isEncryptedBlob(blobPath)) {
+            openRead(blobPath).use { it.size() }
+        } else {
+            Files.size(blobPath)
+        }
 
     override fun delete(blobPath: Path): Boolean = runCatching { Files.deleteIfExists(blobPath) }.getOrDefault(false)
 
@@ -253,6 +281,17 @@ class FsBlobStore(
                 throw e
             }
         }
+    }
+
+    internal fun encryptTempForPublish(
+        tmpPath: Path,
+        plaintextSha256Hex: String,
+        plaintextSize: Long,
+    ): Pair<Path, BlobEncryptionMetadata?> {
+        val enc = encryption ?: return tmpPath to null
+        val encryptedTmp = dataDir.resolve(".tmp").resolve("${UUID.randomUUID()}.enc")
+        val metadata = enc.encryptFile(tmpPath, encryptedTmp, plaintextSha256Hex, plaintextSize)
+        return encryptedTmp to metadata
     }
 }
 
@@ -370,16 +409,21 @@ class FsBlobWrite(
         store.ensureParentsFor(hex)
         val target = store.pathFor(hex)
 
-        Files.move(tmpPath, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+        val (publishPath, encryptionMetadata) = store.encryptTempForPublish(tmpPath, hex, size)
+        Files.move(publishPath, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
         store.fsyncDirectory(target.parent)
 
         committed = true
         runCatching { channel.close() }
+        if (publishPath != tmpPath) runCatching { Files.deleteIfExists(tmpPath) }
         return StoredBlob(
             blobPath = target,
             sha256Hex = hex,
             md5 = md5Digest.digest(),
             sizeBytes = size,
+            encryptionMode = encryptionMetadata?.mode,
+            encryptionKeyId = encryptionMetadata?.keyId,
+            encryptionNonce = encryptionMetadata?.nonce,
         )
     }
 

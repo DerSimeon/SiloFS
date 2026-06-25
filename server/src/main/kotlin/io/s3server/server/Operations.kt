@@ -210,6 +210,19 @@ internal fun renderBlobConsistencyReport(report: BlobConsistencyReport): String 
             append(" expectedPath=").append(missing.expectedPath)
             append('\n')
         }
+        append("corrupt_blobs=").append(report.corruptBlobs.size).append('\n')
+        for (corrupt in report.corruptBlobs) {
+            append("corrupt ")
+            append("kind=").append(corrupt.reference.kind)
+            corrupt.reference.bucket?.let { append(" bucket=").append(it) }
+            corrupt.reference.key?.let { append(" key=").append(it) }
+            corrupt.reference.uploadId?.let { append(" uploadId=").append(it) }
+            corrupt.reference.partNumber?.let { append(" partNumber=").append(it) }
+            append(" sha256=").append(corrupt.reference.sha256Hex)
+            append(" path=").append(corrupt.path)
+            append(" reason=").append(corrupt.reason.replace('\n', ' '))
+            append('\n')
+        }
         append("orphan_blobs=").append(report.orphanBlobs.size).append('\n')
         for (orphan in report.orphanBlobs) {
             append("orphan sha256=").append(orphan.sha256Hex)

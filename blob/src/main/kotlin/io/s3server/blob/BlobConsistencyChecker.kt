@@ -10,6 +10,8 @@ data class BlobReference(
     val kind: String,
     val sha256Hex: String,
     val blobPath: String,
+    val sizeBytes: Long? = null,
+    val encryptionMode: String? = null,
     val bucket: String? = null,
     val key: String? = null,
     val uploadId: String? = null,
@@ -26,15 +28,22 @@ data class OrphanBlob(
     val path: Path,
 )
 
+data class CorruptBlob(
+    val reference: BlobReference,
+    val path: Path,
+    val reason: String,
+)
+
 data class BlobConsistencyReport(
     val referencedBlobCount: Int,
     val contentBlobCount: Int,
     val quarantinedBlobCount: Int,
     val missingBlobs: List<MissingBlob>,
     val orphanBlobs: List<OrphanBlob>,
+    val corruptBlobs: List<CorruptBlob> = emptyList(),
 ) {
     val isConsistent: Boolean
-        get() = missingBlobs.isEmpty()
+        get() = missingBlobs.isEmpty() && corruptBlobs.isEmpty()
 }
 
 /**
@@ -59,6 +68,10 @@ class BlobConsistencyChecker(
             references
                 .filter { ref -> !Files.exists(blobStore.pathFor(ref.sha256Hex)) }
                 .map { ref -> MissingBlob(ref, blobStore.pathFor(ref.sha256Hex)) }
+        val corrupt =
+            references
+                .filter { ref -> Files.exists(blobStore.pathFor(ref.sha256Hex)) && ref.sizeBytes != null }
+                .mapNotNull { ref -> validateReference(ref, blobStore.pathFor(ref.sha256Hex)) }
         val orphans =
             contentBlobs
                 .filter { blob -> blob.sha256Hex !in referencesBySha }
@@ -69,6 +82,7 @@ class BlobConsistencyChecker(
             quarantinedBlobCount = listQuarantinedBlobs().size,
             missingBlobs = missing,
             orphanBlobs = orphans,
+            corruptBlobs = corrupt,
         )
     }
 
@@ -76,7 +90,8 @@ class BlobConsistencyChecker(
         val out = ArrayList<BlobReference>()
         conn.prepareStatement(
             """
-            SELECT bucket, object_key, blob_path, encode(blob_sha256, 'hex') AS sha
+            SELECT bucket, object_key, blob_path, encode(blob_sha256, 'hex') AS sha,
+                   size_bytes, encryption_mode
             FROM objects
             WHERE deleted_at IS NULL
             """.trimIndent(),
@@ -89,13 +104,16 @@ class BlobConsistencyChecker(
                         key = rs.getString("object_key"),
                         blobPath = rs.getString("blob_path"),
                         sha256Hex = rs.getString("sha"),
+                        sizeBytes = rs.getLong("size_bytes"),
+                        encryptionMode = rs.getString("encryption_mode"),
                     )
                 }
             }
         }
         conn.prepareStatement(
             """
-            SELECT upload_id, part_number, blob_path, encode(blob_sha256, 'hex') AS sha
+            SELECT upload_id, part_number, blob_path, encode(blob_sha256, 'hex') AS sha,
+                   size_bytes, encryption_mode
             FROM multipart_parts
             """.trimIndent(),
         ).use { ps ->
@@ -107,6 +125,8 @@ class BlobConsistencyChecker(
                         partNumber = rs.getInt("part_number"),
                         blobPath = rs.getString("blob_path"),
                         sha256Hex = rs.getString("sha"),
+                        sizeBytes = rs.getLong("size_bytes"),
+                        encryptionMode = rs.getString("encryption_mode"),
                     )
                 }
             }
@@ -131,6 +151,32 @@ class BlobConsistencyChecker(
         }
         return out
     }
+
+    private fun validateReference(ref: BlobReference, path: Path): CorruptBlob? =
+        runCatching {
+            val digest = java.security.MessageDigest.getInstance("SHA-256")
+            var size = 0L
+            blobStore.openRead(path).use { ch ->
+                val buf = java.nio.ByteBuffer.allocate(64 * 1024)
+                while (true) {
+                    buf.clear()
+                    val n = ch.read(buf)
+                    if (n <= 0) break
+                    size += n.toLong()
+                    digest.update(buf.array(), 0, n)
+                }
+            }
+            val actualSha = digest.digest().joinToString("") { "%02x".format(it) }
+            when {
+                ref.sizeBytes != null && size != ref.sizeBytes ->
+                    CorruptBlob(ref, path, "plaintext size mismatch expected=${ref.sizeBytes} actual=$size")
+                !actualSha.equals(ref.sha256Hex, ignoreCase = true) ->
+                    CorruptBlob(ref, path, "plaintext sha256 mismatch expected=${ref.sha256Hex} actual=$actualSha")
+                ref.encryptionMode == ObjectEncryption.SSE_S3_MODE && !ObjectEncryption.isEncryptedBlob(path) ->
+                    CorruptBlob(ref, path, "metadata requires SSE-S3 but blob is plaintext")
+                else -> null
+            }
+        }.getOrElse { t -> CorruptBlob(ref, path, t.message ?: t.javaClass.simpleName) }
 
     private fun listContentBlobs(): List<OrphanBlob> {
         val objectsDir = blobStore.dataDir.resolve("objects")

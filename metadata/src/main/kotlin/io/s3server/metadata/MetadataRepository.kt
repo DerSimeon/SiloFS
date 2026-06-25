@@ -91,10 +91,13 @@ interface MetadataRepository {
         blobSha256Hex: String,
         etag: String,
         sizeBytes: Long,
-        checksumCrc32: String? = null,
-        checksumCrc32C: String? = null,
-        checksumSha1: String? = null,
-        checksumSha256: String? = null
+        checksumCrc32: String?,
+        checksumCrc32C: String?,
+        checksumSha1: String?,
+        checksumSha256: String?,
+        encryptionMode: String?,
+        encryptionKeyId: String?,
+        encryptionNonce: ByteArray?
     ): PartInfo
 
     /** Returns a single part row, or null if not uploaded. */
@@ -241,7 +244,10 @@ data class PartInfo(
     val checksumCrc32: String? = null,
     val checksumCrc32C: String? = null,
     val checksumSha1: String? = null,
-    val checksumSha256: String? = null
+    val checksumSha256: String? = null,
+    val encryptionMode: String? = null,
+    val encryptionKeyId: String? = null,
+    val encryptionNonce: ByteArray? = null
 )
 
 /**
@@ -332,8 +338,9 @@ class JdbcMetadataRepository : MetadataRepository {
                 content_type, content_encoding, content_language, cache_control,
                 content_disposition, expires, user_metadata, version_id, is_latest,
                 storage_class, created_at,
-                checksum_crc32, checksum_crc32c, checksum_sha1, checksum_sha256, checksum_type
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, TRUE, ?, now(), ?, ?, ?, ?, ?)
+                checksum_crc32, checksum_crc32c, checksum_sha1, checksum_sha256, checksum_type,
+                encryption_mode, encryption_key_id, encryption_nonce
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, TRUE, ?, now(), ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT (bucket, object_key, version_id) DO UPDATE SET
                 blob_path = EXCLUDED.blob_path,
                 blob_sha256 = EXCLUDED.blob_sha256,
@@ -353,7 +360,10 @@ class JdbcMetadataRepository : MetadataRepository {
                 checksum_crc32c = EXCLUDED.checksum_crc32c,
                 checksum_sha1 = EXCLUDED.checksum_sha1,
                 checksum_sha256 = EXCLUDED.checksum_sha256,
-                checksum_type = EXCLUDED.checksum_type
+                checksum_type = EXCLUDED.checksum_type,
+                encryption_mode = EXCLUDED.encryption_mode,
+                encryption_key_id = EXCLUDED.encryption_key_id,
+                encryption_nonce = EXCLUDED.encryption_nonce
         """.trimIndent()
         conn.prepareStatement(sql).use { ps ->
             ps.applyObjectMeta(meta)
@@ -368,7 +378,8 @@ class JdbcMetadataRepository : MetadataRepository {
                    content_type, content_encoding, content_language, cache_control,
                    content_disposition, expires, user_metadata, version_id, storage_class,
                    created_at,
-                   checksum_crc32, checksum_crc32c, checksum_sha1, checksum_sha256, checksum_type
+                   checksum_crc32, checksum_crc32c, checksum_sha1, checksum_sha256, checksum_type,
+                   encryption_mode, encryption_key_id, encryption_nonce
             FROM objects
             WHERE bucket = ? AND object_key = ? AND deleted_at IS NULL
         """.trimIndent()
@@ -601,13 +612,17 @@ class JdbcMetadataRepository : MetadataRepository {
         checksumCrc32: String?,
         checksumCrc32C: String?,
         checksumSha1: String?,
-        checksumSha256: String?
+        checksumSha256: String?,
+        encryptionMode: String?,
+        encryptionKeyId: String?,
+        encryptionNonce: ByteArray?
     ): PartInfo {
         // Upsert: re-uploading the same part number overwrites the previous part.
         val sql = """
             INSERT INTO multipart_parts(upload_id, part_number, blob_path, blob_sha256, etag, size_bytes,
-                checksum_crc32, checksum_crc32c, checksum_sha1, checksum_sha256)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                checksum_crc32, checksum_crc32c, checksum_sha1, checksum_sha256,
+                encryption_mode, encryption_key_id, encryption_nonce)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT (upload_id, part_number) DO UPDATE SET
                 blob_path = EXCLUDED.blob_path,
                 blob_sha256 = EXCLUDED.blob_sha256,
@@ -617,7 +632,10 @@ class JdbcMetadataRepository : MetadataRepository {
                 checksum_crc32 = EXCLUDED.checksum_crc32,
                 checksum_crc32c = EXCLUDED.checksum_crc32c,
                 checksum_sha1 = EXCLUDED.checksum_sha1,
-                checksum_sha256 = EXCLUDED.checksum_sha256
+                checksum_sha256 = EXCLUDED.checksum_sha256,
+                encryption_mode = EXCLUDED.encryption_mode,
+                encryption_key_id = EXCLUDED.encryption_key_id,
+                encryption_nonce = EXCLUDED.encryption_nonce
         """.trimIndent()
         conn.prepareStatement(sql).use { ps ->
             ps.setString(1, uploadId)
@@ -630,6 +648,9 @@ class JdbcMetadataRepository : MetadataRepository {
             ps.setString(8, checksumCrc32C)
             ps.setString(9, checksumSha1)
             ps.setString(10, checksumSha256)
+            ps.setString(11, encryptionMode)
+            ps.setString(12, encryptionKeyId)
+            ps.setBytes(13, encryptionNonce)
             ps.executeUpdate()
         }
         return PartInfo(
@@ -642,14 +663,44 @@ class JdbcMetadataRepository : MetadataRepository {
             checksumCrc32 = checksumCrc32,
             checksumCrc32C = checksumCrc32C,
             checksumSha1 = checksumSha1,
-            checksumSha256 = checksumSha256
+            checksumSha256 = checksumSha256,
+            encryptionMode = encryptionMode,
+            encryptionKeyId = encryptionKeyId,
+            encryptionNonce = encryptionNonce
         )
     }
+
+    fun uploadPart(
+        conn: Connection,
+        uploadId: String,
+        partNumber: Int,
+        blobPath: String,
+        blobSha256Hex: String,
+        etag: String,
+        sizeBytes: Long,
+    ): PartInfo =
+        uploadPart(
+            conn = conn,
+            uploadId = uploadId,
+            partNumber = partNumber,
+            blobPath = blobPath,
+            blobSha256Hex = blobSha256Hex,
+            etag = etag,
+            sizeBytes = sizeBytes,
+            checksumCrc32 = null,
+            checksumCrc32C = null,
+            checksumSha1 = null,
+            checksumSha256 = null,
+            encryptionMode = null,
+            encryptionKeyId = null,
+            encryptionNonce = null,
+        )
 
     override fun getPart(conn: Connection, uploadId: String, partNumber: Int): PartInfo? {
         val sql = """
             SELECT part_number, blob_path, blob_sha256, etag, size_bytes, uploaded_at,
-                   checksum_crc32, checksum_crc32c, checksum_sha1, checksum_sha256
+                   checksum_crc32, checksum_crc32c, checksum_sha1, checksum_sha256,
+                   encryption_mode, encryption_key_id, encryption_nonce
             FROM multipart_parts
             WHERE upload_id = ? AND part_number = ?
         """.trimIndent()
@@ -665,7 +716,8 @@ class JdbcMetadataRepository : MetadataRepository {
     override fun listParts(conn: Connection, uploadId: String): List<PartInfo> {
         val sql = """
             SELECT part_number, blob_path, blob_sha256, etag, size_bytes, uploaded_at,
-                   checksum_crc32, checksum_crc32c, checksum_sha1, checksum_sha256
+                   checksum_crc32, checksum_crc32c, checksum_sha1, checksum_sha256,
+                   encryption_mode, encryption_key_id, encryption_nonce
             FROM multipart_parts
             WHERE upload_id = ?
             ORDER BY part_number ASC
@@ -1017,7 +1069,10 @@ private fun PreparedStatement.applyObjectMeta(meta: ObjectMetadata) {
     setString(i++, meta.checksumCrc32C)
     setString(i++, meta.checksumSha1)
     setString(i++, meta.checksumSha256)
-    setString(i, meta.checksumType)
+    setString(i++, meta.checksumType)
+    setString(i++, meta.encryptionMode)
+    setString(i++, meta.encryptionKeyId)
+    setBytes(i, meta.encryptionNonce)
 }
 
 private fun ResultSet.toObjectMeta(): ObjectMetadata {
@@ -1045,7 +1100,10 @@ private fun ResultSet.toObjectMeta(): ObjectMetadata {
         checksumCrc32C = getString("checksum_crc32c"),
         checksumSha1 = getString("checksum_sha1"),
         checksumSha256 = getString("checksum_sha256"),
-        checksumType = getString("checksum_type")
+        checksumType = getString("checksum_type"),
+        encryptionMode = getString("encryption_mode"),
+        encryptionKeyId = getString("encryption_key_id"),
+        encryptionNonce = getBytes("encryption_nonce")
     )
 }
 
@@ -1080,7 +1138,10 @@ private fun ResultSet.toPartInfo(): PartInfo = PartInfo(
     checksumCrc32 = getString("checksum_crc32"),
     checksumCrc32C = getString("checksum_crc32c"),
     checksumSha1 = getString("checksum_sha1"),
-    checksumSha256 = getString("checksum_sha256")
+    checksumSha256 = getString("checksum_sha256"),
+    encryptionMode = getString("encryption_mode"),
+    encryptionKeyId = getString("encryption_key_id"),
+    encryptionNonce = getBytes("encryption_nonce")
 )
 
 fun hexToBytes(hex: String): ByteArray {

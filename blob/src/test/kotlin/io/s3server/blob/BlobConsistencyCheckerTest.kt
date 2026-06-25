@@ -98,4 +98,54 @@ class BlobConsistencyCheckerTest {
         assertEquals(0, report.missingBlobs.size)
         assertEquals(0, report.orphanBlobs.size)
     }
+
+    @Test
+    fun `validates encrypted referenced blob plaintext integrity`() {
+        val db = Database.fromUrl(pg.jdbcUrl, pg.username, pg.password)
+        val store = FsBlobStore(tmp, ObjectEncryption(ByteArray(32) { 3 }))
+        val repo = JdbcMetadataRepository()
+        val payload = "encrypted consistency".toByteArray()
+        val stored = store.writeFromBytes(payload)
+        db.withTransaction { c ->
+            repo.createBucket(c, "b", "us-east-1", "o")
+            repo.putObject(
+                c,
+                ObjectMetadata(
+                    bucket = "b",
+                    key = "encrypted.txt",
+                    blobPath = stored.blobPath.toString(),
+                    blobSha256Hex = stored.sha256Hex,
+                    etag = "\"etag\"",
+                    sizeBytes = stored.sizeBytes,
+                    contentType = "text/plain",
+                    contentEncoding = null,
+                    contentLanguage = null,
+                    cacheControl = null,
+                    contentDisposition = null,
+                    expires = null,
+                    userMetadata = emptyMap(),
+                    versionId = "null",
+                    storageClass = "STANDARD",
+                    createdAt = Instant.now(),
+                    encryptionMode = stored.encryptionMode,
+                    encryptionKeyId = stored.encryptionKeyId,
+                    encryptionNonce = stored.encryptionNonce,
+                ),
+            )
+        }
+
+        val clean = BlobConsistencyChecker(store, db).check()
+
+        assertTrue(clean.isConsistent)
+        assertEquals(0, clean.corruptBlobs.size)
+
+        val bytes = Files.readAllBytes(stored.blobPath)
+        bytes[bytes.lastIndex] = (bytes.last().toInt() xor 1).toByte()
+        Files.write(stored.blobPath, bytes)
+
+        val corrupt = BlobConsistencyChecker(store, db).check()
+
+        assertFalse(corrupt.isConsistent)
+        assertEquals(1, corrupt.corruptBlobs.size)
+    }
 }

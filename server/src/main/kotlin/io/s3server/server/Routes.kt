@@ -156,6 +156,7 @@ fun Application.s3Routes(config: ServerConfig, handlers: S3Handlers, multipart: 
                 when {
                     uploadsFlag != null -> {
                         // CreateMultipartUpload
+                        validateObjectEncryptionHeaders(call, config)
                         val contentType = call.request.headers[HttpHeaders.ContentType] ?: "application/octet-stream"
                         val userMetadata = call.request.headers.entries()
                             .filter { it.key.startsWith("x-amz-meta-", ignoreCase = true) }
@@ -256,6 +257,7 @@ fun Application.s3Routes(config: ServerConfig, handlers: S3Handlers, multipart: 
                 // ---- CopyObject detection: presence of x-amz-copy-source ----
                 val copySource = call.request.headers["x-amz-copy-source"]
                 if (copySource != null) {
+                    validateObjectEncryptionHeaders(call, config)
                     val metadataDirective = call.request.headers["x-amz-metadata-directive"] ?: "COPY"
                     val contentType = call.request.headers[HttpHeaders.ContentType]
                     val userMetadata = call.request.headers.entries()
@@ -298,6 +300,7 @@ fun Application.s3Routes(config: ServerConfig, handlers: S3Handlers, multipart: 
                 }
 
                 // ---- Regular PutObject ----
+                validateObjectEncryptionHeaders(call, config)
                 val contentType = call.request.headers[HttpHeaders.ContentType] ?: "application/octet-stream"
                 val userMetadata = call.request.headers.entries()
                     .filter { it.key.startsWith("x-amz-meta-", ignoreCase = true) }
@@ -507,4 +510,25 @@ internal fun parseCompleteMultipartUploadXml(body: String): List<RequestedPart> 
         throw S3Errors.malformedXML("CompleteMultipartUpload body has no <Part> elements")
     }
     return parts
+}
+
+private fun validateObjectEncryptionHeaders(call: ApplicationCall, config: ServerConfig) {
+    val headers = call.request.headers
+    if (
+        headers["x-amz-server-side-encryption-customer-algorithm"] != null ||
+        headers["x-amz-server-side-encryption-customer-key"] != null ||
+        headers["x-amz-server-side-encryption-customer-key-MD5"] != null
+    ) {
+        throw S3Errors.notImplemented("SSE-C is not supported")
+    }
+    if (headers["x-amz-server-side-encryption-aws-kms-key-id"] != null) {
+        throw S3Errors.notImplemented("SSE-KMS is not supported")
+    }
+    val requested = headers["x-amz-server-side-encryption"] ?: return
+    if (!requested.equals("AES256", ignoreCase = true)) {
+        throw S3Errors.notImplemented("server-side encryption mode '$requested' is not supported")
+    }
+    if (!config.objectEncryptionConfig.isEnabled) {
+        throw S3Errors.notImplemented("SSE-S3 requires S3_OBJECT_ENCRYPTION_MODE=sse-s3")
+    }
 }

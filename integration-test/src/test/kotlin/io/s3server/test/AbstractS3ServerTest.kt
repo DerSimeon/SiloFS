@@ -7,6 +7,7 @@ import app.silofs.blob.RecoveryJob
 import app.silofs.metadata.Database
 import app.silofs.metadata.JdbcMetadataRepository
 import app.silofs.server.DatabaseCredentialProvider
+import app.silofs.server.ObjectEncryptionConfig
 import app.silofs.server.ServerConfig
 import app.silofs.server.SecurityConfig
 import app.silofs.server.s3Module
@@ -63,7 +64,8 @@ abstract class AbstractS3ServerTest {
         database = db
         val repo = JdbcMetadataRepository()
         db.withConnection { c -> repo.upsertAccessKey(c, ACCESS_KEY, SECRET_KEY, "test key") }
-        val blobStore = FsBlobStore(dataDir)
+        val objectEncryptionConfig = objectEncryptionConfig()
+        val blobStore = FsBlobStore(dataDir, objectEncryptionConfig.encryption)
         val securityConfig = SecurityConfig(
             secretEncryptionKey = null,
             requireEncryptedSecrets = false,
@@ -82,6 +84,7 @@ abstract class AbstractS3ServerTest {
             repository = repo,
             credentialProvider = credentialProvider,
             securityConfig = securityConfig,
+            objectEncryptionConfig = objectEncryptionConfig,
             recoveryConfig = app.silofs.server.RecoveryConfig(
                 tempMaxAgeSeconds = 1,
                 multipartMaxAgeSeconds = 1,
@@ -135,4 +138,7 @@ abstract class AbstractS3ServerTest {
             .httpClient(httpClient)
             .build()
     }
+
+    protected open fun objectEncryptionConfig(): ObjectEncryptionConfig =
+        ObjectEncryptionConfig(ObjectEncryptionConfig.MODE_DISABLED, null, false)
 }

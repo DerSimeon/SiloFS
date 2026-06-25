@@ -54,6 +54,55 @@ class FsBlobStoreTest {
     }
 
     @Test
+    fun `encrypted store publishes ciphertext and reads plaintext`() {
+        val key = ByteArray(32) { 7 }
+        val store = FsBlobStore(tmp, ObjectEncryption(key))
+        val payload = "secret object bytes".toByteArray()
+
+        val stored = store.writeFromBytes(payload)
+
+        assertEquals(ObjectEncryption.SSE_S3_MODE, stored.encryptionMode)
+        assertEquals(ObjectEncryption.DEFAULT_KEY_ID, stored.encryptionKeyId)
+        assertTrue(ObjectEncryption.isEncryptedBlob(stored.blobPath))
+        assertFalse(Files.readAllBytes(stored.blobPath).contentEquals(payload))
+        assertEquals(payload.size.toLong(), store.sizeOf(stored.blobPath))
+
+        val out = ByteArrayOutputStream()
+        store.openRead(stored.blobPath).use { ch ->
+            val buf = java.nio.ByteBuffer.allocate(64)
+            while (ch.read(buf) > 0) {
+                buf.flip()
+                out.write(buf.array(), 0, buf.remaining())
+                buf.clear()
+            }
+        }
+        assertArrayEquals(payload, out.toByteArray())
+    }
+
+    @Test
+    fun `encrypted store supports plaintext range reads`() {
+        val store = FsBlobStore(tmp, ObjectEncryption(ByteArray(32) { 9 }))
+        val payload = ByteArray(512) { it.toByte() }
+        val stored = store.writeFromBytes(payload)
+        val out = ByteArrayOutputStream()
+
+        store.streamRange(stored.blobPath, ByteRange(100, 149), out)
+
+        assertArrayEquals(payload.copyOfRange(100, 150), out.toByteArray())
+    }
+
+    @Test
+    fun `encrypted blob fails with wrong key`() {
+        val encryptedStore = FsBlobStore(tmp, ObjectEncryption(ByteArray(32) { 1 }))
+        val stored = encryptedStore.writeFromBytes("secret".toByteArray())
+        val wrongKeyStore = FsBlobStore(tmp, ObjectEncryption(ByteArray(32) { 2 }))
+
+        assertThrows<Exception> {
+            wrongKeyStore.openRead(stored.blobPath).use { it.size() }
+        }
+    }
+
+    @Test
     fun `commit rejects mismatched expected sha256`() {
         val store = newStore()
         val payload = "hello".toByteArray()

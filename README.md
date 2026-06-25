@@ -232,6 +232,9 @@ All settings are env vars; no config file is required.
 | `S3_SECRET_ACCESS_KEY`                | `wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY` | SigV4 secret key                    |
 | `S3_ACCESS_KEY_SECRET_ENCRYPTION_KEY` | unset                                  | Base64 32-byte AES-GCM key for encrypting access-key secrets |
 | `S3_REQUIRE_ENCRYPTED_SECRETS`        | `false`                                | Reject plaintext access-key secret rows when true |
+| `S3_OBJECT_ENCRYPTION_MODE`           | `disabled`                             | `disabled` or `sse-s3` for transparent object encryption |
+| `S3_OBJECT_ENCRYPTION_MASTER_KEY`     | unset                                  | Base64 32-byte AES-GCM key required when object encryption is `sse-s3` |
+| `S3_REQUIRE_OBJECT_ENCRYPTION`        | `false`                                | Require `S3_OBJECT_ENCRYPTION_MODE=sse-s3` at startup when true |
 | `S3_RATE_LIMIT_PER_ACCESS_KEY_RPS`    | `0`                                    | Per-access-key request rate limit; 0 disables |
 | `S3_RATE_LIMIT_PER_ACCESS_KEY_BURST`  | `64`                                   | Per-access-key token bucket burst size |
 | `S3_CORS_ALLOWED_ORIGINS`             | unset                                  | Comma-separated allowed origins; CORS disabled when unset |
@@ -267,7 +270,8 @@ The same contract applies to `UploadPart` and `CompleteMultipartUpload`.
 
 * No streaming SigV4 (`aws-chunked` payloads). M6 Core 5 clients pass without it.
 * No virtual-host style addressing. Configure supported clients for path-style.
-* No server-side encryption (SSE-S3/SSE-C) — M8.5
+* SSE-S3 object encryption is supported when explicitly configured. SSE-C,
+  SSE-KMS, and external KMS integration are unsupported.
 * No object versioning, ACLs, IAM, lifecycle, replication, or erasure coding — out of scope
 
 See [docs/COMPATIBILITY_M6.md](docs/COMPATIBILITY_M6.md) for the tested client matrix and [docs/MILESTONES.md](docs/MILESTONES.md) for the full M7-M9 roadmap.
@@ -306,9 +310,10 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Key points:
   unsupported detection rows.
 * **Security**: access keys are metadata-backed, lifecycle-managed, optionally
   encrypted at rest, rate-limitable per key, and audited for mutating actions.
-  TLS should terminate outside the Ktor process.
+  Object blobs can be encrypted with local SSE-S3 AES-GCM. TLS should terminate
+  outside the Ktor process.
 
 ## Next steps
 
-1. Add M8 backup/restore tooling before storing data anyone cares about.
-2. Add M8.5 object encryption at rest before M9 production sign-off.
+1. Complete the M9 production readiness review and declared-limit report.
+2. Build the standalone M10 CLI for mc-like operator workflows.

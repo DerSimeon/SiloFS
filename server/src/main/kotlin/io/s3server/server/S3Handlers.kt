@@ -356,7 +356,10 @@ class S3Handlers(
                 checksumType = checksumType ?: if (
                     checksumCrc32 != null || checksumCrc32C != null ||
                     checksumSha1 != null || checksumSha256 != null
-                ) "FULL_OBJECT" else null
+                ) "FULL_OBJECT" else null,
+                encryptionMode = stored.encryptionMode,
+                encryptionKeyId = stored.encryptionKeyId,
+                encryptionNonce = stored.encryptionNonce
             )
             withS3 {
                 config.database.withTransaction { conn ->
@@ -381,6 +384,9 @@ class S3Handlers(
                 checksumSha256?.let { append("x-amz-checksum-sha256", it) }
                 val effType = checksumType ?: meta.checksumType
                 effType?.let { append("x-amz-checksum-type", it) }
+                if (meta.encryptionMode == app.silofs.blob.ObjectEncryption.SSE_S3_MODE) {
+                    append("x-amz-server-side-encryption", "AES256")
+                }
             }
             call.respondText("", ContentType.Application.Xml.withCharset(Charsets.UTF_8), HttpStatusCode.OK)
         } catch (t: Throwable) {
@@ -543,7 +549,10 @@ class S3Handlers(
                 checksumCrc32C = srcMeta.checksumCrc32C,
                 checksumSha1 = srcMeta.checksumSha1,
                 checksumSha256 = srcMeta.checksumSha256,
-                checksumType = srcMeta.checksumType
+                checksumType = srcMeta.checksumType,
+                encryptionMode = stored.encryptionMode,
+                encryptionKeyId = stored.encryptionKeyId,
+                encryptionNonce = stored.encryptionNonce
             )
             withS3 {
                 config.database.withTransaction { conn ->
@@ -559,6 +568,9 @@ class S3Handlers(
             call.response.headers.apply {
                 append(HttpHeaders.ETag, etag)
                 append("x-amz-storage-class", effectiveStorageClass)
+                if (meta.encryptionMode == app.silofs.blob.ObjectEncryption.SSE_S3_MODE) {
+                    append("x-amz-server-side-encryption", "AES256")
+                }
             }
             call.respondText(body, ContentType.Application.Xml.withCharset(Charsets.UTF_8), HttpStatusCode.OK)
         } catch (t: Throwable) {
@@ -622,6 +634,9 @@ class S3Handlers(
             meta.contentDisposition?.let { append(HttpHeaders.ContentDisposition, it) }
             meta.expires?.let { append(HttpHeaders.Expires, it) }
             append("x-amz-storage-class", meta.storageClass)
+            if (meta.encryptionMode == app.silofs.blob.ObjectEncryption.SSE_S3_MODE) {
+                append("x-amz-server-side-encryption", "AES256")
+            }
             // Echo user metadata exactly as AWS does: lowercase the header name
             // but preserve the value verbatim.
             meta.userMetadata.forEach { (k, v) ->
@@ -701,6 +716,9 @@ class S3Handlers(
             meta.contentDisposition?.let { append(HttpHeaders.ContentDisposition, it) }
             meta.expires?.let { append(HttpHeaders.Expires, it) }
             append("x-amz-storage-class", meta.storageClass)
+            if (meta.encryptionMode == app.silofs.blob.ObjectEncryption.SSE_S3_MODE) {
+                append("x-amz-server-side-encryption", "AES256")
+            }
             meta.userMetadata.forEach { (k, v) ->
                 append("x-amz-meta-" + k.lowercase(Locale.US), v)
             }
