@@ -23,6 +23,7 @@ data class ServerConfig(
     val repository: JdbcMetadataRepository,
     val credentialProvider: CredentialProvider,
     val recoveryConfig: RecoveryConfig,
+    val requestMetrics: RequestMetricsRegistry = RequestMetricsRegistry(),
     val sigv4MaxClockSkewSeconds: Long = 900L
 ) {
     companion object {

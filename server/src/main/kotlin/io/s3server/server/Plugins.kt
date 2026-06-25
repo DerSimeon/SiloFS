@@ -33,6 +33,9 @@ import org.slf4j.event.Level
 fun Application.installPlugins(config: ServerConfig) {
     install(DefaultHeaders)
     install(RequestIdPlugin)
+    install(RequestMetricsPlugin) {
+        registry = config.requestMetrics
+    }
     install(CallLogging) {
         level = Level.INFO
         filter { call -> call.request.path() !in setOf("/healthz", "/readyz", "/metricsz") }

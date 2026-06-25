@@ -179,4 +179,5 @@ configured via env vars.
   write access to the configured data directory.
 * Metrics endpoint at `GET /metricsz` (Prometheus text format, no SigV4) with
   gauges for active multipart uploads, orphan temp files, quarantined blobs,
-  and blob data directory bytes.
+  and blob data directory bytes, plus request counters, request/response byte
+  counters, and latency histograms labelled by S3 operation and HTTP status.

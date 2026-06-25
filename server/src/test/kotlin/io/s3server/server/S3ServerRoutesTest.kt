@@ -149,6 +149,68 @@ class S3ServerRoutesTest {
     }
 
     @Test
+    fun `operation classifier names bucket object and multipart requests`() {
+        assertEquals("ListBuckets", classifyS3Operation("GET", "/", emptySet(), hasCopySource = false))
+        assertEquals("CreateBucket", classifyS3Operation("PUT", "/photos", emptySet(), hasCopySource = false))
+        assertEquals("ListMultipartUploads", classifyS3Operation("GET", "/photos", setOf("uploads"), hasCopySource = false))
+        assertEquals("PutObject", classifyS3Operation("PUT", "/photos/a/b.txt", emptySet(), hasCopySource = false))
+        assertEquals("CopyObject", classifyS3Operation("PUT", "/photos/a/b.txt", emptySet(), hasCopySource = true))
+        assertEquals(
+            "UploadPartCopy",
+            classifyS3Operation("PUT", "/photos/a/b.txt", setOf("uploadId", "partNumber"), hasCopySource = true),
+        )
+        assertEquals(
+            "AbortMultipartUpload",
+            classifyS3Operation("DELETE", "/photos/a/b.txt", setOf("uploadId"), hasCopySource = false),
+        )
+    }
+
+    @Test
+    fun `operation classifier excludes internal endpoints from request metrics`() {
+        assertEquals(null, classifyS3Operation("GET", "/healthz", emptySet(), hasCopySource = false))
+        assertEquals(null, classifyS3Operation("GET", "/readyz", emptySet(), hasCopySource = false))
+        assertEquals(null, classifyS3Operation("GET", "/metricsz", emptySet(), hasCopySource = false))
+    }
+
+    @Test
+    fun `request metrics render counters bytes and latency histogram`() {
+        val registry = RequestMetricsRegistry()
+        registry.observe(
+            operation = "PutObject",
+            status = 200,
+            requestBytes = 11,
+            responseBytes = 0,
+            latencyNanos = 7_000_000,
+        )
+        registry.observe(
+            operation = "PutObject",
+            status = 200,
+            requestBytes = 13,
+            responseBytes = 2,
+            latencyNanos = 20_000_000,
+        )
+
+        val body =
+            renderMetrics(
+                MetricsSnapshot(
+                    activeMultipartUploads = 0,
+                    orphanTempFiles = 0,
+                    quarantinedBlobs = 0,
+                    blobDiskBytes = 0,
+                    requestMetrics = registry.snapshot(),
+                ),
+            )
+
+        assertTrue(body.contains("silofs_http_requests_total{operation=\"PutObject\",status=\"200\"} 2\n"))
+        assertTrue(body.contains("silofs_http_request_bytes_total{operation=\"PutObject\",status=\"200\"} 24\n"))
+        assertTrue(body.contains("silofs_http_response_bytes_total{operation=\"PutObject\",status=\"200\"} 2\n"))
+        assertTrue(body.contains("silofs_http_request_duration_seconds_bucket{operation=\"PutObject\",status=\"200\",le=\"0.005\"} 0\n"))
+        assertTrue(body.contains("silofs_http_request_duration_seconds_bucket{operation=\"PutObject\",status=\"200\",le=\"0.01\"} 1\n"))
+        assertTrue(body.contains("silofs_http_request_duration_seconds_bucket{operation=\"PutObject\",status=\"200\",le=\"+Inf\"} 2\n"))
+        assertTrue(body.contains("silofs_http_request_duration_seconds_count{operation=\"PutObject\",status=\"200\"} 2\n"))
+    }
+
+    @Test
     fun `allowed storage classes include standard`() {
         assertTrue(S3Handlers.ALLOWED_STORAGE_CLASSES.contains("STANDARD"))
         assertTrue(S3Handlers.ALLOWED_STORAGE_CLASSES.contains("GLACIER"))

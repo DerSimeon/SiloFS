@@ -16,6 +16,7 @@ internal data class MetricsSnapshot(
     val orphanTempFiles: Int,
     val quarantinedBlobs: Int,
     val blobDiskBytes: Long,
+    val requestMetrics: List<RequestMetricSample> = emptyList(),
 )
 
 internal fun collectReadiness(config: ServerConfig): List<ReadinessCheck> = listOf(checkDatabase(config), checkDataDirectory(config))
@@ -76,6 +77,7 @@ internal fun collectMetrics(config: ServerConfig): MetricsSnapshot {
         orphanTempFiles = orphanTempFiles,
         quarantinedBlobs = quarantinedBlobs,
         blobDiskBytes = diskUsageBytes(config.dataDir),
+        requestMetrics = config.requestMetrics.snapshot(),
     )
 }
 
@@ -93,7 +95,49 @@ internal fun renderMetrics(snapshot: MetricsSnapshot): String =
         append("# HELP silofs_blob_disk_bytes Bytes used under the configured blob data directory.\n")
         append("# TYPE silofs_blob_disk_bytes gauge\n")
         append("silofs_blob_disk_bytes ").append(snapshot.blobDiskBytes).append('\n')
+        renderRequestMetrics(snapshot.requestMetrics)
     }
+
+private fun StringBuilder.renderRequestMetrics(samples: List<RequestMetricSample>) {
+    append("# HELP silofs_http_requests_total HTTP requests by S3 operation and status.\n")
+    append("# TYPE silofs_http_requests_total counter\n")
+    append("# HELP silofs_http_request_bytes_total HTTP request bytes by S3 operation and status.\n")
+    append("# TYPE silofs_http_request_bytes_total counter\n")
+    append("# HELP silofs_http_response_bytes_total HTTP response bytes by S3 operation and status.\n")
+    append("# TYPE silofs_http_response_bytes_total counter\n")
+    append("# HELP silofs_http_request_duration_seconds HTTP request latency by S3 operation and status.\n")
+    append("# TYPE silofs_http_request_duration_seconds histogram\n")
+
+    for (sample in samples) {
+        val labels = "operation=\"${sample.operation}\",status=\"${sample.status}\""
+        append("silofs_http_requests_total{").append(labels).append("} ").append(sample.count).append('\n')
+        append("silofs_http_request_bytes_total{").append(labels).append("} ").append(sample.requestBytes).append('\n')
+        append("silofs_http_response_bytes_total{").append(labels).append("} ").append(sample.responseBytes).append('\n')
+        REQUEST_LATENCY_BUCKET_SECONDS.forEachIndexed { index, upperBound ->
+            append("silofs_http_request_duration_seconds_bucket{")
+                .append(labels)
+                .append(",le=\"")
+                .append(formatBucket(upperBound))
+                .append("\"} ")
+                .append(sample.latencyBuckets.getOrElse(index) { 0L })
+                .append('\n')
+        }
+        append("silofs_http_request_duration_seconds_bucket{")
+            .append(labels)
+            .append(",le=\"+Inf\"} ")
+            .append(sample.latencyBuckets.getOrElse(REQUEST_LATENCY_BUCKET_SECONDS.size) { sample.count })
+            .append('\n')
+        append("silofs_http_request_duration_seconds_sum{").append(labels).append("} ")
+            .append(sample.latencyNanos.toDouble() / 1_000_000_000.0)
+            .append('\n')
+        append("silofs_http_request_duration_seconds_count{").append(labels).append("} ")
+            .append(sample.count)
+            .append('\n')
+    }
+}
+
+private fun formatBucket(value: Double): String =
+    if (value % 1.0 == 0.0) value.toLong().toString() else value.toString()
 
 private fun diskUsageBytes(root: Path): Long {
     if (!Files.exists(root)) return 0L
