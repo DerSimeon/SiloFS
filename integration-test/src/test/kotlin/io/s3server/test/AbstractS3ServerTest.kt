@@ -58,7 +58,7 @@ abstract class AbstractS3ServerTest {
     @BeforeAll
     fun startServer() {
         pg.start()
-        dataDir = Files.createTempDirectory("s3server-test-data")
+        dataDir = Files.createTempDirectory("silofs-test-data")
         val db = Database.fromUrl(pg.jdbcUrl, pg.username, pg.password)
         database = db
         val repo = JdbcMetadataRepository()

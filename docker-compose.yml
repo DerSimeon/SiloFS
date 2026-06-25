@@ -2,20 +2,20 @@ services:
   postgres:
     image: postgres:16-alpine
     environment:
-      POSTGRES_DB: s3server
-      POSTGRES_USER: s3server
-      POSTGRES_PASSWORD: s3server
+      POSTGRES_DB: silofs
+      POSTGRES_USER: silofs
+      POSTGRES_PASSWORD: silofs
     ports:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U s3server -d s3server"]
+      test: ["CMD-SHELL", "pg_isready -U silofs -d silofs"]
       interval: 5s
       timeout: 3s
       retries: 10
 
-  s3server:
+  silofs:
     build: .
     depends_on:
       postgres:
@@ -24,17 +24,17 @@ services:
       S3_BIND_HOST: 0.0.0.0
       S3_BIND_PORT: 8080
       S3_REGION: us-east-1
-      S3_DATA_DIR: /var/lib/s3server/data
-      S3_DB_URL: jdbc:postgresql://postgres:5432/s3server
-      S3_DB_USER: s3server
-      S3_DB_PASSWORD: s3server
+      S3_DATA_DIR: /var/lib/silofs/data
+      S3_DB_URL: jdbc:postgresql://postgres:5432/silofs
+      S3_DB_USER: silofs
+      S3_DB_PASSWORD: silofs
       S3_ACCESS_KEY_ID: AKIAIOSFODNN7EXAMPLE
       S3_SECRET_ACCESS_KEY: wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
     ports:
       - "8080:8080"
     volumes:
-      - s3data:/var/lib/s3server/data
+      - silofsdata:/var/lib/silofs/data
 
 volumes:
   pgdata:
-  s3data:
+  silofsdata:

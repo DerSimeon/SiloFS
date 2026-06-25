@@ -1,4 +1,4 @@
-# s3-server — single-node S3-compatible object storage (Kotlin / Ktor)
+# silofs — single-node S3-compatible object storage (Kotlin / Ktor)
 
 A from-scratch, production-leaning S3-compatible storage server written in
 Kotlin with Ktor, coroutines, PostgreSQL for metadata, and a local filesystem
@@ -13,11 +13,11 @@ SDK Go v2.
 ## Quick start (Docker Compose)
 
 ```bash
-cd /home/z/my-project/s3-server
+cd /home/z/my-project/silofs
 docker compose up --build
 ```
 
-This boots Postgres 16 and the s3-server on `http://localhost:8080`. The server
+This boots Postgres 16 and silofs on `http://localhost:8080`. The server
 applies Flyway migrations on startup. Default credentials:
 
 ```
@@ -31,15 +31,15 @@ Region:     us-east-1
 You need JDK 21 and Docker (for Postgres). Boot a Postgres on `:5432`:
 
 ```bash
-docker run -d --name s3pg -p 5432:5432 \
-  -e POSTGRES_DB=s3server -e POSTGRES_USER=s3server -e POSTGRES_PASSWORD=s3server \
+docker run -d --name silofspg -p 5432:5432 \
+  -e POSTGRES_DB=silofs -e POSTGRES_USER=silofs -e POSTGRES_PASSWORD=silofs \
   postgres:16-alpine
 ```
 
 Then run the server:
 
 ```bash
-cd /home/z/my-project/s3-server
+cd /home/z/my-project/silofs
 ./gradlew :server:run
 ```
 
@@ -166,7 +166,7 @@ s3c := s3.NewFromConfig(cfg, func(o *s3.Options) {
 ## Module layout
 
 ```
-s3-server/
+silofs/
   common/           — pure JVM: S3 errors, XML, names, time, ranges, ETag, checksums
   auth/             — AWS SigV4 verifier + Ktor plugin + presigned URL generator
   metadata/         — PostgreSQL schema (V1–V4) + JDBC repository (HikariCP + Flyway)
@@ -193,6 +193,28 @@ s3-server/
 
 Coverage reports are written to `*/build/reports/jacoco/test/html/index.html`.
 
+## Backup and restore
+
+M8 backup support is offline/quiesced. Stop silofs or block writes before
+running the scripts.
+
+```bash
+export SILOFS_PG_URI='postgres://silofs:silofs@localhost:5432/silofs'
+export S3_DATA_DIR=/var/lib/silofs/data
+scripts/silofs-backup.sh
+```
+
+Restore with:
+
+```bash
+export SILOFS_PG_URI='postgres://silofs:silofs@localhost:5432/silofs'
+export S3_DATA_DIR=/var/lib/silofs/data
+scripts/silofs-restore.sh /path/to/backup
+silofs admin backup verify --manifest /path/to/backup/manifest.json
+```
+
+See [docs/OPERATIONS_M8.md](docs/OPERATIONS_M8.md).
+
 ## Configuration
 
 All settings are env vars; no config file is required.
@@ -202,10 +224,10 @@ All settings are env vars; no config file is required.
 | `S3_BIND_HOST`                        | `0.0.0.0`                              | HTTP bind address                        |
 | `S3_BIND_PORT`                        | `8080`                                 | HTTP bind port                           |
 | `S3_REGION`                           | `us-east-1`                            | AWS region reported by SigV4             |
-| `S3_DATA_DIR`                         | `/var/lib/s3server/data`               | Blob storage root                        |
-| `S3_DB_URL`                           | `jdbc:postgresql://localhost:5432/s3server` | Postgres JDBC URL                  |
-| `S3_DB_USER`                          | `s3server`                             | Postgres username                        |
-| `S3_DB_PASSWORD`                      | `s3server`                             | Postgres password                        |
+| `S3_DATA_DIR`                         | `/var/lib/silofs/data`                 | Blob storage root                        |
+| `S3_DB_URL`                           | `jdbc:postgresql://localhost:5432/silofs` | Postgres JDBC URL                    |
+| `S3_DB_USER`                          | `silofs`                               | Postgres username                        |
+| `S3_DB_PASSWORD`                      | `silofs`                               | Postgres password                        |
 | `S3_ACCESS_KEY_ID`                    | `AKIAIOSFODNN7EXAMPLE`                 | SigV4 access key (seeded into `access_keys`) |
 | `S3_SECRET_ACCESS_KEY`                | `wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY` | SigV4 secret key                    |
 | `S3_ACCESS_KEY_SECRET_ENCRYPTION_KEY` | unset                                  | Base64 32-byte AES-GCM key for encrypting access-key secrets |
@@ -272,8 +294,8 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Key points:
 * **Streaming**: `respondOutputStream` for downloads, `receiveStream` for
   uploads.
 * **Idempotent recovery**: every sweep step is safe to crash mid-execution.
-* **Admin inspection**: `s3server admin check-blobs` reports missing referenced
-  blobs and orphan content blobs without mutating data; `s3server admin
+* **Admin inspection**: `silofs admin check-blobs` reports missing referenced
+  blobs and orphan content blobs without mutating data; `silofs admin
   recover-once` runs one recovery sweep and exits.
 * **Operational limits**: global upload and multipart-completion limiters
   return S3 `SlowDown` (503) when saturated. `/readyz` checks DB, data-dir

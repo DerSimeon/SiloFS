@@ -159,10 +159,10 @@ The server runs one recovery pass during startup before it begins accepting
 requests, then starts the periodic coroutine. These jobs are designed so that
 crashing mid-sweep is safe — every step is idempotent.
 
-For operator inspection, `s3server admin check-blobs` runs a read-only
+For operator inspection, `silofs admin check-blobs` runs a read-only
 consistency check that reports live DB references whose content-addressed blob
 is missing, content blobs with no live DB reference, and quarantined blobs.
-`s3server admin recover-once` runs the same recovery sweep once and exits.
+`silofs admin recover-once` runs the same recovery sweep once and exits.
 
 ## 7. Authentication
 
@@ -190,7 +190,7 @@ token bucket return S3 `SlowDown` and increment a metrics counter.
 
 ## 8. Operational concerns
 
-* Single configurable data directory, default `/var/lib/s3server/data`.
+* Single configurable data directory, default `/var/lib/silofs/data`.
 * Postgres connection via HikariCP, with Flyway applying migrations on boot.
 * Structured logging via SLF4J + Logback JSON encoder.
 * Every non-internal request is classified into an S3 operation name for logs

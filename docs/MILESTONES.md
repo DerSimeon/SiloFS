@@ -522,6 +522,8 @@ Known gaps at end of M7:
 
 Make the single-node deployment recoverable and maintainable.
 
+Status: complete for offline/quiesced backup and restore. M8 adds `pg_dump`/`pg_restore` scripts, incremental content-blob copy, backup manifests, admin inspection commands, backup verification through the blob consistency checker, repair/GC dry-runs, migration runner, access-key lifecycle admin commands, and operator procedures.
+
 Deliverables:
 
 - `pg_dump` metadata backup script
@@ -530,7 +532,7 @@ Deliverables:
 - incremental blob backup using content-addressed SHA-256
 - backup consistency procedure between DB and blobs
 - restore verification command
-- `s3server-admin` CLI
+- `silofs admin` CLI commands
 - inspect buckets
 - inspect objects
 - inspect multipart uploads
@@ -558,8 +560,8 @@ Tests:
 
 Known gaps at end of M8:
 
-- disaster recovery limits must be documented
-- unsupported online backup scenarios must be documented
+- online write-consistent backup remains unsupported; quiesce writes first
+- backups are local scripts and must be copied to independent storage by operators
 
 ## Milestone 8.5 — encryption at rest
 

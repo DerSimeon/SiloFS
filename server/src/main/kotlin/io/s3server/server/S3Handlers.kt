@@ -121,7 +121,7 @@ class S3Handlers(
         val body = s3XmlDocument("ListAllMyBucketsResult") {
             s3Open("Owner")
             s3Tag("ID", "owner")
-            s3Tag("DisplayName", "s3-server")
+                s3Tag("DisplayName", "silofs")
             s3Close("Owner")
             s3Open("Buckets")
             for (b in buckets) {

@@ -1,4 +1,4 @@
-# S3 feature matrix (through Milestone 7)
+# S3 feature matrix (through Milestone 8)
 
 ## Supported
 
@@ -51,6 +51,8 @@
 | Rate limiting | Optional per-access-key rate limiting returns S3 `SlowDown` (503) and exports a rejection counter. |
 | Audit logging | Mutating S3 requests and admin access-key changes are recorded in `audit_events` without secrets or presigned signatures. |
 | CORS | Disabled by default. `S3_CORS_ALLOWED_ORIGINS` enables explicit origins; `*` is accepted only when explicitly configured. |
+| Admin inspection | `silofs admin inspect ...`, `check-blobs`, `storage usage`, `repair --dry-run`, and `gc --dry-run` provide read-only operator visibility. |
+| Backup/restore | Offline/quiesced backup and restore scripts cover PostgreSQL metadata dumps, content-addressed blob copies, manifests, and post-restore consistency verification. |
 
 ## Not supported
 

@@ -6,6 +6,7 @@ plugins {
 
 application {
     mainClass.set("app.silofs.server.MainKt")
+    applicationName = "silofs"
 }
 
 dependencies {
@@ -36,7 +37,7 @@ dependencies {
     add("testImplementation", "io.kotest:kotest-assertions-core:6.2.1")
     add("testImplementation", "io.mockk:mockk:1.14.11")
     add("testImplementation", "io.ktor:ktor-server-test-host:3.5.0")
-    add("testImplementation", "org.testcontainers:postgresql:1.20.3")
-    add("testImplementation", "org.testcontainers:junit-jupiter:1.20.3")
+    add("testImplementation", "org.testcontainers:postgresql:1.21.4")
+    add("testImplementation", "org.testcontainers:junit-jupiter:1.21.4")
     add("testImplementation", "org.jetbrains.kotlinx:kotlinx-coroutines-test:1.11.0")
 }

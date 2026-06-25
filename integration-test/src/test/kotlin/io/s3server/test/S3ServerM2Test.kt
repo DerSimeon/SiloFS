@@ -66,7 +66,7 @@ class S3ServerM2Test : AbstractS3ServerTest() {
                     .expires(expiresInstant)
                     .metadata(mapOf(
                         "Author" to "alice",
-                        "Project" to "s3-server",
+                        "Project" to "silofs",
                         "case-Mixed-Name" to "MixedCaseValue"
                     ))
                     .build(),
@@ -85,7 +85,7 @@ class S3ServerM2Test : AbstractS3ServerTest() {
             assertNotNull(head.expires())
             // AWS SDK normalises metadata keys to lowercase on read.
             assertEquals("alice", head.metadata()["author"])
-            assertEquals("s3-server", head.metadata()["project"])
+            assertEquals("silofs", head.metadata()["project"])
             assertEquals("MixedCaseValue", head.metadata()["case-mixed-name"])
             // ETag must be present and quoted.
             val etag = head.eTag()
@@ -104,7 +104,7 @@ class S3ServerM2Test : AbstractS3ServerTest() {
             assertEquals("identity", getResp.sdkHttpResponse().firstMatchingHeader("Content-Encoding").orElse(null))
             assertNotNull(getResp.sdkHttpResponse().firstMatchingHeader("Expires").orElse(null))
             assertEquals("alice", getResp.sdkHttpResponse().firstMatchingHeader("x-amz-meta-author").orElse(null))
-            assertEquals("s3-server", getResp.sdkHttpResponse().firstMatchingHeader("x-amz-meta-project").orElse(null))
+            assertEquals("silofs", getResp.sdkHttpResponse().firstMatchingHeader("x-amz-meta-project").orElse(null))
             assertEquals("MixedCaseValue", getResp.sdkHttpResponse().firstMatchingHeader("x-amz-meta-case-mixed-name").orElse(null))
         }
     }

@@ -88,7 +88,7 @@ class Database(
                 this.username = username
                 this.password = password
                 driverClassName = "org.postgresql.Driver"
-                poolName = "s3-server-pool"
+                poolName = "silofs-pool"
                 maximumPoolSize = 16
                 minimumIdle = 2
                 connectionTimeout = 5_000

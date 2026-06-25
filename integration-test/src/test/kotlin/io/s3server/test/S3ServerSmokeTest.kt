@@ -29,7 +29,7 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
- * Smoke tests against the running s3-server using the AWS SDK for Java v2.
+ * Smoke tests against the running silofs server using the AWS SDK for Java v2.
  *
  * These tests deliberately use the synchronous client — async tests live in
  * [S3ServerConcurrencyTest].

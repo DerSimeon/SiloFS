@@ -2,7 +2,7 @@
 """
 Milestone 3 — boto3 multipart upload test.
 
-This script exercises the s3-server's multipart upload implementation
+This script exercises the silofs multipart upload implementation
 through boto3, the official AWS SDK for Python. It mirrors the AWS SDK
 for Java v2 tests in S3ServerM3Test.kt but uses the Python client so we
 can verify cross-SDK compatibility.

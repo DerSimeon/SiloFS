@@ -59,10 +59,10 @@ val RequestIdPlugin: ApplicationPlugin<RequestIdConfig> = createApplicationPlugi
     }
 }
 
-/** Build an extended ID like `m2s3server/AAAAAAAB/0123456789abcdef`. */
+/** Build an extended ID like `silofs/AAAAAAAB/0123456789abcdef`. */
 private fun buildExtendedId(requestId: String, sequence: Long): String {
     val seqHex = "%08x".format(sequence)
-    return "m2s3server/$seqHex/$requestId"
+    return "silofs/$seqHex/$requestId"
 }
 
 /** Read the per-call request ID, or null if the plugin didn't run. */

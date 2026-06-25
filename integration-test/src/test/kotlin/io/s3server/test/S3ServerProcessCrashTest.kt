@@ -28,7 +28,7 @@ import java.util.UUID
 /**
  * Real process-kill crash tests (red flag #6).
  *
- * These tests spawn a separate JVM process running the s3-server, write data
+ * These tests spawn a separate JVM process running silofs, write data
  * via the AWS SDK, then KILL the process at controlled failure points using
  * `Process.destroyForcibly()`. A fresh server is then started against the
  * same Postgres + data directory, and we verify the object state is

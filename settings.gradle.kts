@@ -1,4 +1,4 @@
-rootProject.name = "s3-server"
+rootProject.name = "silofs"
 
 include(":common")
 include(":auth")
