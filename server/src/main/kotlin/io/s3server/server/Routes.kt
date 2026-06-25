@@ -98,6 +98,53 @@ fun Application.s3Routes(config: ServerConfig, handlers: S3Handlers, multipart: 
             }
         }
 
+        // Some SDKs normalize bucket-level operations to /{bucket}/. Treat the
+        // trailing slash as bucket-root, not as an empty object key.
+        route("/{bucket}/") {
+            put {
+                val bucket = call.parameters["bucket"]!!
+                handlers.createBucket(call, bucket)
+            }
+            head {
+                val bucket = call.parameters["bucket"]!!
+                handlers.headBucket(call, bucket)
+            }
+            delete {
+                val bucket = call.parameters["bucket"]!!
+                handlers.deleteBucket(call, bucket)
+            }
+            get {
+                val bucket = call.parameters["bucket"]!!
+                when {
+                    call.request.queryParameters["location"] != null -> {
+                        handlers.getBucketLocation(call, bucket)
+                    }
+                    call.request.queryParameters["uploads"] != null -> {
+                        val prefix = call.request.queryParameters["prefix"]
+                        val delimiter = call.request.queryParameters["delimiter"]
+                        multipart.listMultipartUploads(call, bucket, prefix, delimiter)
+                    }
+                    else -> {
+                        val listType = call.request.queryParameters["list-type"]
+                        if (listType == "2" || listType == null) {
+                            val maxKeys = call.request.queryParameters["max-keys"]?.toIntOrNull() ?: 1000
+                            val continuationToken = call.request.queryParameters["continuation-token"]
+                            val startAfter = call.request.queryParameters["start-after"]
+                            val prefix = call.request.queryParameters["prefix"]
+                            val delimiter = call.request.queryParameters["delimiter"]
+                            val encodingType = call.request.queryParameters["encoding-type"]
+                            handlers.listObjectsV2(
+                                call, bucket, maxKeys, continuationToken, startAfter,
+                                prefix, delimiter, encodingType
+                            )
+                        } else {
+                            throw S3Errors.notImplemented("list-type=$listType")
+                        }
+                    }
+                }
+            }
+        }
+
         // Object-level operations
         route("/{bucket}/{key...}") {
             // ---- POST: CreateMultipartUpload (?uploads) or CompleteMultipartUpload (?uploadId) ----

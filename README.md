@@ -2,10 +2,11 @@
 
 A from-scratch, production-leaning S3-compatible storage server written in
 Kotlin with Ktor, coroutines, PostgreSQL for metadata, and a local filesystem
-for blob storage. Designed to be testable against the real AWS SDK for Java v2,
-boto3, and the AWS CLI.
+for blob storage. Designed to be testable against the M6 Core 5 path-style
+client matrix: AWS SDK Java v2, AWS CLI, boto3, AWS SDK JavaScript v3, and AWS
+SDK Go v2.
 
-> **Status**: Milestones 1 through 5 delivered for the single-node envelope. See [docs/MILESTONES.md](docs/MILESTONES.md)
+> **Status**: Milestones 1 through 6 delivered for the single-node envelope. See [docs/MILESTONES.md](docs/MILESTONES.md)
 > for the roadmap and [docs/S3_FEATURES.md](docs/S3_FEATURES.md) for the
 > supported/unsupported matrix.
 
@@ -72,19 +73,72 @@ aws_secret_access_key = wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
 
 ```python
 import boto3
+from botocore.config import Config
+
 s3 = boto3.client(
     "s3",
     endpoint_url="http://localhost:8080",
     aws_access_key_id="AKIAIOSFODNN7EXAMPLE",
     aws_secret_access_key="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
     region_name="us-east-1",
+    config=Config(s3={"addressing_style": "path"}, signature_version="s3v4"),
 )
 s3.create_bucket(Bucket="boto")
 s3.put_object(Bucket="boto", Key="k", Body=b"hello")
 print(s3.get_object(Bucket="boto", Key="k")["Body"].read())
 ```
 
-## Supported S3 operations (M1–M3.1)
+## Client configuration examples
+
+M6 support requires path-style addressing with an explicit endpoint.
+
+AWS CLI:
+
+```bash
+aws configure set default.s3.addressing_style path
+aws --endpoint-url http://localhost:8080 --region us-east-1 s3api list-buckets
+```
+
+boto3:
+
+```python
+from botocore.config import Config
+
+s3 = boto3.client(
+    "s3",
+    endpoint_url="http://localhost:8080",
+    region_name="us-east-1",
+    config=Config(s3={"addressing_style": "path"}, signature_version="s3v4"),
+)
+```
+
+AWS SDK JavaScript v3:
+
+```javascript
+import { S3Client } from "@aws-sdk/client-s3";
+
+const s3 = new S3Client({
+  region: "us-east-1",
+  endpoint: "http://localhost:8080",
+  forcePathStyle: true,
+  credentials: {
+    accessKeyId: "AKIAIOSFODNN7EXAMPLE",
+    secretAccessKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+  },
+});
+```
+
+AWS SDK Go v2:
+
+```go
+cfg, _ := config.LoadDefaultConfig(ctx, config.WithRegion("us-east-1"))
+s3c := s3.NewFromConfig(cfg, func(o *s3.Options) {
+    o.BaseEndpoint = aws.String("http://localhost:8080")
+    o.UsePathStyle = true
+})
+```
+
+## Supported S3 operations
 
 | Operation | Milestone | Notes |
 |-----------|-----------|-------|
@@ -119,6 +173,7 @@ s3-server/
   blob/             — FsBlobStore with crash-safe commit + RecoveryJob
   server/           — Ktor app, routes, StatusPages XML errors, multipart handlers, main()
   integration-test/ — AWS SDK for Java v2 + S3Presigner + Testcontainers
+  compatibility-test/ — Docker-backed Core 5 path-style client matrix
   docs/             — ARCHITECTURE, MILESTONES, SCHEMA, ROUTES, S3_FEATURES
   scripts/          — boto3 multipart test
   docker-compose.yml
@@ -131,6 +186,7 @@ s3-server/
 ./gradlew build                       # compile + unit tests + detekt + ktlint
 ./gradlew check                       # above + 90% coverage verification
 ./gradlew :integration-test:test      # AWS SDK + Testcontainers suite
+./gradlew :compatibility-test:test    # M6 Core 5 Docker-backed matrix
 ./gradlew jacocoTestReport            # aggregate coverage report
 ./gradlew jacocoCoverageVerification  # enforce 90% line / 85% branch
 ```
@@ -180,14 +236,14 @@ When `PutObject` returns 200:
 
 The same contract applies to `UploadPart` and `CompleteMultipartUpload`.
 
-## Known limitations (post-M5)
+## Known limitations (post-M6)
 
-* No streaming SigV4 (`aws-chunked` payloads) — M6 if required by the supported client matrix
-* No virtual-host style addressing — M6 if required by the supported client matrix
+* No streaming SigV4 (`aws-chunked` payloads). M6 Core 5 clients pass without it.
+* No virtual-host style addressing. Configure supported clients for path-style.
 * No server-side encryption (SSE-S3/SSE-C) — M7
 * No object versioning, ACLs, IAM, lifecycle, replication, or erasure coding — out of scope
 
-See [docs/MILESTONES.md](docs/MILESTONES.md) for the full M6–M9 roadmap.
+See [docs/COMPATIBILITY_M6.md](docs/COMPATIBILITY_M6.md) for the tested client matrix and [docs/MILESTONES.md](docs/MILESTONES.md) for the full M7-M9 roadmap.
 
 ## Architecture
 
@@ -218,9 +274,11 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Key points:
   return S3 `SlowDown` (503) when saturated. `/readyz` checks DB, data-dir
   writeability, and free disk. `/metricsz` exports request, limiter, DB pool,
   recovery, and blob-store counters.
+* **Compatibility**: Core 5 path-style matrix is tested in `:compatibility-test`;
+  virtual-host addressing and `aws-chunked` streaming are recorded as
+  unsupported detection rows.
 
 ## Next steps
 
-1. Expand the declared M6 client matrix and run it against the exact clients
-   that will be supported.
-2. Start M7 security hardening before storing real user data.
+1. Start M7 security hardening before storing real user data.
+2. Add M8 backup/restore tooling before storing data anyone cares about.

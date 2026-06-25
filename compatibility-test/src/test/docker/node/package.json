@@ -1,0 +1,10 @@
+{
+  "name": "silofs-m6-js-compat",
+  "version": "1.0.0",
+  "type": "module",
+  "private": true,
+  "dependencies": {
+    "@aws-sdk/client-s3": "3.731.1",
+    "@aws-sdk/s3-request-presigner": "3.731.1"
+  }
+}

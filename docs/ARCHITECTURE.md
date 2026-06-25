@@ -3,11 +3,13 @@
 ## 1. Goals
 
 * S3-compatible REST API on a single node, suitable for development and as a
-  local target for the AWS SDK for Java/Kotlin, boto3, and the AWS CLI.
+  local target for the M6 Core 5 path-style matrix: AWS SDK Java v2, AWS CLI,
+  boto3, AWS SDK JavaScript v3, and AWS SDK Go v2.
 * Crash-safe durability for `PutObject` and multipart upload — once the API
   returns 200, the blob survives process kill, OOM, and machine restart.
-* Path-style addressing (`http://host:port/bucket/key`) as the default. Virtual-host
-  style is a later milestone.
+* Path-style addressing (`http://host:port/bucket/key`) as the supported
+  addressing mode. Virtual-host style is detected in compatibility tests but
+  not supported.
 * No replication, no clustering, no erasure coding, no versioning, no IAM.
 * Coroutine-friendly: large uploads and downloads must stream without blocking
   request threads.
@@ -73,11 +75,16 @@ blob          // FsBlobStore (NIO.2 + fsync); depends on common
 server        // Ktor app, routing, wiring; depends on all of the above
    ^
 integration-test  // AWS SDK + Testcontainers; black-box against the server
+   ^
+compatibility-test // Docker-backed Core 5 client matrix
 ```
 
 Server is the only module that depends on every other module. The
-integration-test module is a `test-only` aggregate that boots the server via
-its `main` function and exercises it through the AWS SDK for Java v2.
+integration-test module is a `test-only` aggregate that boots the server and
+exercises durability-oriented S3 behavior through the AWS SDK for Java v2. The
+compatibility-test module boots the same server shape on a random port and runs
+the declared Core 5 client matrix, with non-JVM clients isolated in pinned
+Docker images.
 
 ## 4. Durability commit flow
 
@@ -201,3 +208,19 @@ configured via env vars.
 * Graceful shutdown flips the server into drain mode, stops accepting new work,
   waits for Ktor's configured quiet period and timeout, waits for in-flight
   accounting to reach zero, stops the recovery job, and closes the DB pool.
+
+## 9. Compatibility envelope
+
+M6 compatibility support is intentionally narrower than AWS S3:
+
+* Clients must use an explicit endpoint and path-style addressing.
+* Java v2 disables chunked encoding in the supported test row.
+* boto3 uses `addressing_style = path`.
+* JavaScript v3 uses `forcePathStyle: true`.
+* Go v2 uses `UsePathStyle = true`.
+* AWS CLI uses `--endpoint-url` and `s3.addressing_style = path`.
+
+The compatibility tests also record virtual-host and streaming SigV4 detection
+results. Those modes are not silently claimed: virtual-host routing and
+`aws-chunked` request decoding remain unsupported until a future milestone
+explicitly adds and tests them.

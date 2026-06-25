@@ -2,6 +2,8 @@
 
 All routes are mounted under the application root and use **path-style** addressing:
 `http://host:port/{bucket}` and `http://host:port/{bucket}/{key+}`.
+For SDK compatibility, `http://host:port/{bucket}/` is treated as the same
+bucket-root request as `http://host:port/{bucket}`.
 
 The SigV4 auth plugin runs as a Ktor `ApplicationCallPipeline` phase *before*
 routing. The only routes exempt from SigV4 are `GET /healthz`, `GET /readyz`,

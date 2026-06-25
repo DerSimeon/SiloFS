@@ -627,16 +627,11 @@ class S3Handlers(
             meta.userMetadata.forEach { (k, v) ->
                 append("x-amz-meta-" + k.lowercase(Locale.US), v)
             }
-            // M2.1: echo persisted checksums so the SDK can verify.
-            meta.checksumCrc32?.let { append("x-amz-checksum-crc32", it) }
-            meta.checksumCrc32C?.let { append("x-amz-checksum-crc32c", it) }
-            meta.checksumSha1?.let { append("x-amz-checksum-sha1", it) }
-            meta.checksumSha256?.let { append("x-amz-checksum-sha256", it) }
-            meta.checksumType?.let { append("x-amz-checksum-type", it) }
         }
 
         if (range == null) {
             call.response.headers.append(HttpHeaders.ContentLength, size.toString())
+            appendChecksumHeaders(call, meta)
             call.respondOutputStream(ContentType.parse(meta.contentType), HttpStatusCode.OK) {
                 val ch = blobStore.openRead(blobPath)
                 val buf = java.nio.ByteBuffer.allocate(64 * 1024)
@@ -860,6 +855,16 @@ class S3Handlers(
                     throw S3Errors.badDigest(sha256, computed)
                 }
             }
+        }
+    }
+
+    private fun appendChecksumHeaders(call: ApplicationCall, meta: ObjectMetadata) {
+        call.response.headers.apply {
+            meta.checksumCrc32?.let { append("x-amz-checksum-crc32", it) }
+            meta.checksumCrc32C?.let { append("x-amz-checksum-crc32c", it) }
+            meta.checksumSha1?.let { append("x-amz-checksum-sha1", it) }
+            meta.checksumSha256?.let { append("x-amz-checksum-sha256", it) }
+            meta.checksumType?.let { append("x-amz-checksum-type", it) }
         }
     }
 

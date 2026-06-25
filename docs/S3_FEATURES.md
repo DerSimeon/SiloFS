@@ -1,16 +1,16 @@
-# S3 feature matrix (through Milestone 5)
+# S3 feature matrix (through Milestone 6)
 
 ## Supported
 
 | Operation | Notes |
 |-----------|-------|
-| `CreateBucket` | Path-style. `x-amz-bucket-region` echoed. Region is stored but not validated. |
-| `HeadBucket` | 200 / 404. `x-amz-bucket-region` header on success. |
+| `CreateBucket` | Path-style. `/{bucket}` and `/{bucket}/` are both treated as bucket-root requests for SDK compatibility. `x-amz-bucket-region` echoed. Region is stored but not validated. |
+| `HeadBucket` | 200 / 404. `/{bucket}` and `/{bucket}/` are both accepted. `x-amz-bucket-region` header on success. |
 | `DeleteBucket` | Soft-deletes the bucket row. Returns `BucketNotEmpty` (409) if the bucket contains any non-deleted objects. Idempotent — deleting a missing bucket returns `NoSuchBucket`. |
 | `ListBuckets` | Returns all non-deleted buckets in `ListAllMyBucketsResult` XML with `Owner` block. |
 | `GetBucketLocation` | `GET /{bucket}?location` returns `LocationConstraint` XML; empty body for `us-east-1` (AWS convention). |
 | `PutObject` | Single-shot. Streams to disk via temp file, fsync, rename. User metadata via `x-amz-meta-*`. ETag is the quoted MD5 hex. Validates `Content-Length` (required, ≥0, ≤5 GiB) and verifies actual streamed byte count. Validates `x-amz-storage-class`, honours `If-None-Match: *`. Persists and **verifies** `x-amz-checksum-{crc32,crc32c,sha1,sha256}` against actual blob content. |
-| `GetObject` | Full body + `Range: bytes=...` support (single range). Honours `If-Match` and `If-None-Match`; returns `304 Not Modified` when the latter matches. Echoes persisted `x-amz-checksum-*` headers. |
+| `GetObject` | Full body + `Range: bytes=...` support (single range). Honours `If-Match` and `If-None-Match`; returns `304 Not Modified` when the latter matches. Echoes persisted `x-amz-checksum-*` headers on full-object GET. Range GET intentionally omits full-object checksum headers so SDKs do not validate a partial body against a full-object checksum. |
 | `HeadObject` | Returns the same headers as `GetObject` with no body. Honours `If-Match` / `If-None-Match`. Echoes checksums. |
 | `DeleteObject` | Idempotent. Always returns 204 with `Content-Length: 0`. Soft-deletes the object row so the blob can be GC'd. |
 | `CopyObject` | Server-side copy via `x-amz-copy-source` header. Supports `x-amz-metadata-directive` (`COPY` default, `REPLACE`). Cross-bucket and in-place copy. Conditional copy via `x-amz-copy-source-if-match` / `x-amz-copy-source-if-none-match`. Returns `CopyObjectResult` XML with new ETag + LastModified. Source checksums are propagated. |
@@ -45,13 +45,14 @@
 | Operational limits | Object uploads, multipart part uploads/copies, object copies, and multipart completions are protected by configurable global semaphores. Saturation returns S3 `SlowDown` (503). |
 | Readiness | `/readyz` probes PostgreSQL, data-directory writeability, and minimum free disk space. |
 | Metrics | `/metricsz` exports request counters, latency histograms, request/response byte counters, active multipart uploads, orphan temp files, quarantined blobs, blob disk bytes, in-flight/rejected limiter counters, DB pool gauges, recovery sweep counters, and blob-store error counters. |
+| Compatibility matrix | M6 Docker-backed tests pass for the Core 5 path-style matrix: AWS SDK Java v2, AWS CLI, boto3, AWS SDK JavaScript v3, and AWS SDK Go v2. See `docs/COMPATIBILITY_M6.md`. |
 
-## Not supported (returns `NotImplemented` or `NotSupported`)
+## Not supported
 
-| Operation | Target milestone |
-|-----------|------------------|
-| Streaming SigV4 (`aws-chunked`) | M6 if required by the supported client matrix |
-| Virtual-host style addressing | M6 if required by the supported client matrix |
+| Operation | Status |
+|-----------|--------|
+| Streaming SigV4 (`aws-chunked`) | Unsupported. M6 Core 5 clients pass with non-streaming/file/buffer bodies; detection tests record that this mode is not required by the supported configuration. |
+| Virtual-host style addressing | Unsupported. M6 Core 5 support requires explicit path-style endpoint configuration; detection tests record virtual-host behavior separately. |
 | `If-Modified-Since` / `If-Unmodified-Since` on CopyObject | M6 compatibility hardening (currently accepted but not enforced) |
 | Object versioning | out of scope |
 | ACLs / IAM policy engine | out of scope |

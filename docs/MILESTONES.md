@@ -418,25 +418,27 @@ Known gaps at end of M5:
 
 Verify the implementation against real-world clients and document compatibility gaps honestly.
 
+Status: complete for the declared Core 5 path-style matrix. The `:compatibility-test` module now runs Docker-backed compatibility rows for AWS CLI, boto3, AWS SDK JavaScript v3, and AWS SDK Go v2, plus an in-JVM AWS SDK Java v2 row. The tested support contract requires explicit path-style/custom-endpoint configuration. Virtual-host addressing and streaming SigV4 are detected and documented, not supported.
+
 Clients:
 
-- AWS SDK for Java v2
-- AWS SDK for Kotlin
-- AWS SDK for JavaScript v3
-- boto3
-- AWS CLI with `--endpoint-url`
-- AWS SDK for Go v2
-- MinIO `mc`
-- optional `rclone`
-- optional `s5cmd`
+- AWS SDK for Java v2: supported in the Core 5 path-style matrix
+- AWS CLI with `--endpoint-url`: supported in the Core 5 path-style matrix
+- boto3: supported in the Core 5 path-style matrix
+- AWS SDK for JavaScript v3: supported in the Core 5 path-style matrix
+- AWS SDK for Go v2: supported in the Core 5 path-style matrix
+- AWS SDK for Kotlin: not yet claimed
+- MinIO `mc`: not yet claimed
+- optional `rclone`: not yet claimed
+- optional `s5cmd`: not yet claimed
 
 Deliverables:
 
 - shared compatibility test harness
 - path-style endpoint test matrix
-- virtual-host style addressing, if included in scope
-- streaming SigV4 / `aws-chunked`, if included in scope
-- behavior comparison against real AWS S3 where practical
+- virtual-host style addressing detection
+- streaming SigV4 / `aws-chunked` detection
+- behavior comparison against real AWS S3 where practical, deferred until exact production clients need it
 - documented compatibility report
 - explicit unsupported feature list
 - client configuration examples
@@ -462,8 +464,10 @@ Compatibility areas:
 
 Known gaps at end of M6:
 
-- any unsupported S3 behavior must be explicitly documented
-- any client-specific incompatibility must be documented with reproduction steps
+- virtual-host style addressing remains unsupported; Core 5 clients must be configured for path-style
+- streaming SigV4 / `aws-chunked` remains unsupported; Core 5 tests use bodies that do not require it
+- AWS SDK Kotlin, MinIO `mc`, `rclone`, and `s5cmd` are not part of the claimed M6 support matrix
+- any future client-specific incompatibility must be documented with reproduction steps in `docs/COMPATIBILITY_M6.md`
 
 ## Milestone 7 — security hardening
 

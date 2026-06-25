@@ -356,7 +356,7 @@ class MultipartHandlers(
             for (rp in requestedParts) {
                 val p = parts[rp.partNumber] ?: throw S3Errors.noSuchPart(uploadId, rp.partNumber)
                 // AWS requires the client-supplied ETag to match the stored one.
-                if (rp.etag != null && rp.etag != p.etag) {
+                if (rp.etag != null && normalizeEtag(rp.etag) != normalizeEtag(p.etag)) {
                     throw S3Errors.invalidPartETag(rp.partNumber, rp.etag, p.etag)
                 }
                 orderedParts += p
@@ -802,6 +802,9 @@ class MultipartHandlers(
         for (i in a.indices) diff = diff or (a[i].code xor b[i].code)
         return diff == 0
     }
+
+    private fun normalizeEtag(etag: String): String =
+        etag.trim().removeSurrounding("\"")
 
     /**
      * Validate client-supplied part checksum headers against the actual part
