@@ -3,6 +3,7 @@ package app.silofs.test
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.netty.Netty
 import app.silofs.auth.StaticCredentialProvider
+import app.silofs.blob.BlobConsistencyChecker
 import app.silofs.blob.FsBlobStore
 import app.silofs.metadata.Database
 import app.silofs.metadata.JdbcMetadataRepository
@@ -17,6 +18,8 @@ import org.testcontainers.containers.PostgreSQLContainer
 import software.amazon.awssdk.core.sync.RequestBody
 import software.amazon.awssdk.regions.Region
 import software.amazon.awssdk.services.s3.S3Client
+import software.amazon.awssdk.services.s3.model.CompletedMultipartUpload
+import software.amazon.awssdk.services.s3.model.CompletedPart
 import software.amazon.awssdk.services.s3.model.PutObjectRequest
 import java.net.ServerSocket
 import java.net.URI
@@ -134,6 +137,13 @@ class S3ServerFailpointCrashTest {
         server.process.waitFor()
     }
 
+    private fun assertNoMissingBlobs(pg: PostgreSQLContainer<*>, dataDir: Path) {
+        Database.fromUrl(pg.jdbcUrl, pg.username, pg.password).use { db ->
+            val report = BlobConsistencyChecker(FsBlobStore(dataDir), db).check()
+            assertEquals(0, report.missingBlobs.size, "missing blob references: ${report.missingBlobs}")
+        }
+    }
+
     private fun newS3Client(endpoint: String): S3Client = S3Client.builder()
         .region(Region.of(REGION))
         .credentialsProvider(software.amazon.awssdk.auth.credentials.StaticCredentialsProvider.create(
@@ -193,6 +203,7 @@ class S3ServerFailpointCrashTest {
             // Phase 2: restart without failpoint, verify the object is there.
             val server2 = startServer(pg, dataDir, failpoint = null)
             try {
+                assertNoMissingBlobs(pg, dataDir)
                 newS3Client(server2.endpoint).use { s3 ->
                     val got = s3.getObjectAsBytes { it.bucket(bucket).key("k") }
                     assertArrayEquals(payload, got.asByteArray())
@@ -244,6 +255,7 @@ class S3ServerFailpointCrashTest {
             // Phase 2: restart, the object should NOT exist.
             val server2 = startServer(pg, dataDir, failpoint = null)
             try {
+                assertNoMissingBlobs(pg, dataDir)
                 newS3Client(server2.endpoint).use { s3 ->
                     org.junit.jupiter.api.assertThrows<software.amazon.awssdk.services.s3.model.NoSuchKeyException> {
                         s3.headObject { it.bucket(bucket).key("k") }
@@ -295,6 +307,7 @@ class S3ServerFailpointCrashTest {
 
             val server2 = startServer(pg, dataDir, failpoint = null)
             try {
+                assertNoMissingBlobs(pg, dataDir)
                 newS3Client(server2.endpoint).use { s3 ->
                     org.junit.jupiter.api.assertThrows<software.amazon.awssdk.services.s3.model.NoSuchKeyException> {
                         s3.headObject { it.bucket(bucket).key("k") }
@@ -347,6 +360,7 @@ class S3ServerFailpointCrashTest {
 
             val server2 = startServer(pg, dataDir, failpoint = null)
             try {
+                assertNoMissingBlobs(pg, dataDir)
                 newS3Client(server2.endpoint).use { s3 ->
                     // Object should not exist (no metadata row).
                     org.junit.jupiter.api.assertThrows<software.amazon.awssdk.services.s3.model.NoSuchKeyException> {
@@ -359,6 +373,80 @@ class S3ServerFailpointCrashTest {
         } finally {
             pg.stop()
             dataDir.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `multipart completion crash windows do not create missing blob references`() {
+        val failpoints =
+            listOf(
+                "mpu-before-final-publish",
+                "mpu-after-final-publish",
+                "mpu-after-object-put",
+                "mpu-after-completed-state",
+            )
+
+        for (failpoint in failpoints) {
+            val pg = PostgreSQLContainer("postgres:16-alpine")
+                .withDatabaseName("s3fpmpu")
+                .withUsername("test")
+                .withPassword("test")
+            pg.start()
+            val dataDir = Files.createTempDirectory("s3-fp-mpu")
+
+            try {
+                val server1 = startServer(pg, dataDir, failpoint = failpoint)
+                val bucket = "fp-mpu-" + UUID.randomUUID().toString().take(8)
+                val payload = ByteArray(6 * 1024 * 1024) { 0x5a }
+
+                try {
+                    newS3Client(server1.endpoint).use { s3 ->
+                        s3.createBucket { it.bucket(bucket) }
+                        val upload = s3.createMultipartUpload { it.bucket(bucket).key("k") }
+                        val part =
+                            s3.uploadPart(
+                                { it.bucket(bucket).key("k").uploadId(upload.uploadId()).partNumber(1).contentLength(payload.size.toLong()) },
+                                RequestBody.fromBytes(payload),
+                            )
+                        try {
+                            s3.completeMultipartUpload {
+                                it.bucket(bucket)
+                                    .key("k")
+                                    .uploadId(upload.uploadId())
+                                    .multipartUpload(
+                                        CompletedMultipartUpload.builder()
+                                            .parts(
+                                                CompletedPart.builder()
+                                                    .partNumber(1)
+                                                    .eTag(part.eTag())
+                                                    .build(),
+                                            )
+                                            .build(),
+                                    )
+                            }
+                        } catch (e: Exception) {
+                            // Expected: the server halts at the requested failpoint.
+                        }
+                    }
+                } finally {
+                    server1.process.waitFor(10, TimeUnit.SECONDS)
+                }
+
+                val server2 = startServer(pg, dataDir, failpoint = null)
+                try {
+                    assertNoMissingBlobs(pg, dataDir)
+                    newS3Client(server2.endpoint).use { s3 ->
+                        org.junit.jupiter.api.assertThrows<software.amazon.awssdk.services.s3.model.NoSuchKeyException> {
+                            s3.headObject { it.bucket(bucket).key("k") }
+                        }
+                    }
+                } finally {
+                    stopServer(server2)
+                }
+            } finally {
+                pg.stop()
+                dataDir.toFile().deleteRecursively()
+            }
         }
     }
 }

@@ -373,6 +373,7 @@ class MultipartHandlers(
             val write = blobStore.beginWrite(expectedSha256Hex = null)
             val partMd5s = ArrayList<ByteArray>(orderedParts.size)
             try {
+                Failpoint.crashIf("mpu-before-final-publish")
                 for (p in orderedParts) {
                     val partPath = Path.of(p.blobPath)
                     if (!blobStore.exists(partPath)) {
@@ -397,6 +398,7 @@ class MultipartHandlers(
                 val published = publishWithIntent(write)
                 finalIntentId = published.intentId
                 val stored = published.stored
+                Failpoint.crashIf("mpu-after-final-publish")
 
                 val etag = ETag.fromMultipart(partMd5s)
 
@@ -423,6 +425,7 @@ class MultipartHandlers(
                 withS3 {
                     config.database.withTransaction { conn ->
                         repo.putObject(conn, meta)
+                        Failpoint.crashIf("mpu-after-object-put")
                         // Check the return value. If the upload is no longer
                         // COMPLETING, the transaction rolls back and no object
                         // row or part deletion is committed.
@@ -432,6 +435,7 @@ class MultipartHandlers(
                                 IllegalStateException("completeMultipartUpload state transition failed for $uploadId")
                             )
                         }
+                        Failpoint.crashIf("mpu-after-completed-state")
                         repo.deleteParts(conn, uploadId)
                         repo.clearBlobWriteIntent(conn, finalIntentId)
                     }

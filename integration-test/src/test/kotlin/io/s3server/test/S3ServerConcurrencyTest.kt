@@ -1,12 +1,16 @@
 package app.silofs.test
 
 import io.kotest.matchers.shouldBe
+import app.silofs.blob.BlobConsistencyChecker
+import app.silofs.blob.FsBlobStore
 import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.TestInstance
 import software.amazon.awssdk.core.sync.RequestBody
+import software.amazon.awssdk.services.s3.model.CompletedMultipartUpload
+import software.amazon.awssdk.services.s3.model.CompletedPart
 import software.amazon.awssdk.services.s3.model.PutObjectRequest
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
@@ -19,6 +23,11 @@ import java.util.concurrent.atomic.AtomicInteger
 class S3ServerConcurrencyTest : AbstractS3ServerTest() {
 
     private fun newBucket(): String = "conc-" + UUID.randomUUID().toString().take(8).lowercase()
+
+    private fun assertNoMissingBlobs() {
+        val report = BlobConsistencyChecker(FsBlobStore(dataDir), database).check()
+        assertEquals(0, report.missingBlobs.size, "missing blob references: ${report.missingBlobs}")
+    }
 
     @Test
     fun `parallel puts of different keys`() {
@@ -58,6 +67,7 @@ class S3ServerConcurrencyTest : AbstractS3ServerTest() {
 
             val listed = s3.listObjectsV2 { it.bucket(bucket).maxKeys(1000) }
             assertEquals(workers * perWorker, listed.contents().size)
+            assertNoMissingBlobs()
         }
     }
 
@@ -114,6 +124,7 @@ class S3ServerConcurrencyTest : AbstractS3ServerTest() {
             assertTrue(latch.await(60, TimeUnit.SECONDS))
             assertTrue(errors.isEmpty(), "errors: $errors")
             pool.shutdown()
+            assertNoMissingBlobs()
         }
     }
 
@@ -167,6 +178,126 @@ class S3ServerConcurrencyTest : AbstractS3ServerTest() {
             assertEquals(50, deleted.get())
             assertTrue(errors.isEmpty(), "errors: $errors")
             pool.shutdown()
+            assertNoMissingBlobs()
+        }
+    }
+
+    @Test
+    fun `duplicate complete multipart upload has one winner and leaves consistent blobs`() {
+        newS3Client().use { s3 ->
+            val bucket = newBucket()
+            val payload = ByteArray(6 * 1024 * 1024) { 0x33 }
+            s3.createBucket { it.bucket(bucket) }
+            val upload = s3.createMultipartUpload { it.bucket(bucket).key("dup-complete.bin") }
+            val part =
+                s3.uploadPart(
+                    { it.bucket(bucket).key("dup-complete.bin").uploadId(upload.uploadId()).partNumber(1).contentLength(payload.size.toLong()) },
+                    RequestBody.fromBytes(payload),
+                )
+            val completeRequest =
+                CompletedMultipartUpload.builder()
+                    .parts(CompletedPart.builder().partNumber(1).eTag(part.eTag()).build())
+                    .build()
+
+            val pool = Executors.newFixedThreadPool(2)
+            val start = CountDownLatch(1)
+            val done = CountDownLatch(2)
+            val successes = AtomicInteger()
+            val errors = ConcurrentHashMap<Int, Throwable>()
+            repeat(2) { index ->
+                pool.submit {
+                    try {
+                        start.await()
+                        s3.completeMultipartUpload {
+                            it.bucket(bucket)
+                                .key("dup-complete.bin")
+                                .uploadId(upload.uploadId())
+                                .multipartUpload(completeRequest)
+                        }
+                        successes.incrementAndGet()
+                    } catch (t: Throwable) {
+                        errors[index] = t
+                    } finally {
+                        done.countDown()
+                    }
+                }
+            }
+            start.countDown()
+            assertTrue(done.await(60, TimeUnit.SECONDS))
+            pool.shutdown()
+
+            assertEquals(1, successes.get(), "exactly one completion should win; errors=$errors")
+            val head = s3.headObject { it.bucket(bucket).key("dup-complete.bin") }
+            assertEquals(payload.size.toLong(), head.contentLength())
+            assertNoMissingBlobs()
+        }
+    }
+
+    @Test
+    fun `abort racing complete multipart upload has one terminal outcome`() {
+        newS3Client().use { s3 ->
+            val bucket = newBucket()
+            val payload = ByteArray(6 * 1024 * 1024) { 0x44 }
+            s3.createBucket { it.bucket(bucket) }
+            val upload = s3.createMultipartUpload { it.bucket(bucket).key("abort-race.bin") }
+            val part =
+                s3.uploadPart(
+                    { it.bucket(bucket).key("abort-race.bin").uploadId(upload.uploadId()).partNumber(1).contentLength(payload.size.toLong()) },
+                    RequestBody.fromBytes(payload),
+                )
+            val completeRequest =
+                CompletedMultipartUpload.builder()
+                    .parts(CompletedPart.builder().partNumber(1).eTag(part.eTag()).build())
+                    .build()
+
+            val pool = Executors.newFixedThreadPool(2)
+            val start = CountDownLatch(1)
+            val done = CountDownLatch(2)
+            val completeSuccess = AtomicInteger()
+            val abortSuccess = AtomicInteger()
+            val errors = ConcurrentHashMap<String, Throwable>()
+
+            pool.submit {
+                try {
+                    start.await()
+                    s3.completeMultipartUpload {
+                        it.bucket(bucket)
+                            .key("abort-race.bin")
+                            .uploadId(upload.uploadId())
+                            .multipartUpload(completeRequest)
+                    }
+                    completeSuccess.incrementAndGet()
+                } catch (t: Throwable) {
+                    errors["complete"] = t
+                } finally {
+                    done.countDown()
+                }
+            }
+            pool.submit {
+                try {
+                    start.await()
+                    s3.abortMultipartUpload { it.bucket(bucket).key("abort-race.bin").uploadId(upload.uploadId()) }
+                    abortSuccess.incrementAndGet()
+                } catch (t: Throwable) {
+                    errors["abort"] = t
+                } finally {
+                    done.countDown()
+                }
+            }
+            start.countDown()
+            assertTrue(done.await(60, TimeUnit.SECONDS))
+            pool.shutdown()
+
+            assertEquals(1, completeSuccess.get() + abortSuccess.get(), "exactly one terminal operation should win; errors=$errors")
+            if (completeSuccess.get() == 1) {
+                val head = s3.headObject { it.bucket(bucket).key("abort-race.bin") }
+                assertEquals(payload.size.toLong(), head.contentLength())
+            } else {
+                org.junit.jupiter.api.assertThrows<software.amazon.awssdk.services.s3.model.NoSuchKeyException> {
+                    s3.headObject { it.bucket(bucket).key("abort-race.bin") }
+                }
+            }
+            assertNoMissingBlobs()
         }
     }
 }

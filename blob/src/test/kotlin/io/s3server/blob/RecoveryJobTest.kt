@@ -297,6 +297,108 @@ class RecoveryJobTest {
     }
 
     @Test
+    fun `tombstoned blob is restored to safety when reference appears before sweep`() {
+        val (store, repo, db) = newSystem()
+        val stored = store.writeFromBytes("referenced tombstone".toByteArray())
+        db.withTransaction { c ->
+            repo.createBucket(c, "b", "us-east-1", "o")
+            repo.putObject(
+                c,
+                app.silofs.common.ObjectMetadata(
+                    bucket = "b",
+                    key = "k",
+                    blobPath = stored.blobPath.toString(),
+                    blobSha256Hex = stored.sha256Hex,
+                    etag = "\"deadbeef\"",
+                    sizeBytes = stored.sizeBytes,
+                    contentType = "text/plain",
+                    contentEncoding = null,
+                    contentLanguage = null,
+                    cacheControl = null,
+                    contentDisposition = null,
+                    expires = null,
+                    userMetadata = emptyMap(),
+                    versionId = "null",
+                    storageClass = "STANDARD",
+                    createdAt = java.time.Instant.now(),
+                ),
+            )
+            c.prepareStatement(
+                "INSERT INTO blob_gc_tombstones(blob_sha256_hex) VALUES (?)",
+            ).use { ps ->
+                ps.setString(1, stored.sha256Hex)
+                ps.executeUpdate()
+            }
+        }
+
+        val job = RecoveryJob(store, repo, db, minBlobAgeSeconds = 0)
+        job.sweepUnreferencedBlobs()
+
+        assertTrue(Files.exists(stored.blobPath))
+        assertFalse(Files.exists(tmp.resolve(".quarantine").resolve(stored.sha256Hex)))
+        val tombstones =
+            db.withConnection { c ->
+                c.prepareStatement("SELECT count(*) FROM blob_gc_tombstones WHERE blob_sha256_hex = ?").use { ps ->
+                    ps.setString(1, stored.sha256Hex)
+                    ps.executeQuery().use { rs ->
+                        assertTrue(rs.next())
+                        rs.getInt(1)
+                    }
+                }
+            }
+        assertEquals(0, tombstones)
+    }
+
+    @Test
+    fun `runOnce is idempotent across stale intents orphan blobs and quarantine`() {
+        val (store, repo, db) = newSystem()
+        val live = store.writeFromBytes("live".toByteArray())
+        val orphan = store.writeFromBytes("orphan".toByteArray())
+        val intentOnly = store.writeFromBytes("intent".toByteArray())
+        db.withTransaction { c ->
+            repo.createBucket(c, "b", "us-east-1", "o")
+            repo.putObject(
+                c,
+                app.silofs.common.ObjectMetadata(
+                    bucket = "b",
+                    key = "live",
+                    blobPath = live.blobPath.toString(),
+                    blobSha256Hex = live.sha256Hex,
+                    etag = "\"deadbeef\"",
+                    sizeBytes = live.sizeBytes,
+                    contentType = "text/plain",
+                    contentEncoding = null,
+                    contentLanguage = null,
+                    cacheControl = null,
+                    contentDisposition = null,
+                    expires = null,
+                    userMetadata = emptyMap(),
+                    versionId = "null",
+                    storageClass = "STANDARD",
+                    createdAt = java.time.Instant.now(),
+                ),
+            )
+            repo.createBlobWriteIntent(c, intentOnly.sha256Hex)
+        }
+
+        val job =
+            RecoveryJob(
+                store,
+                repo,
+                db,
+                blobWriteIntentMaxAgeSeconds = -1,
+                minBlobAgeSeconds = 0,
+                quarantineMaxAgeSeconds = -1,
+            )
+        repeat(3) { job.runOnce() }
+
+        assertTrue(Files.exists(live.blobPath))
+        assertFalse(Files.exists(orphan.blobPath))
+        assertFalse(Files.exists(intentOnly.blobPath))
+        assertTrue(BlobConsistencyChecker(store, db).check().missingBlobs.isEmpty())
+    }
+
+    @Test
     fun `runOnce executes all sweeps without throwing`() {
         val (store, repo, db) = newSystem()
         val job = RecoveryJob(store, repo, db, multipartMaxAgeSeconds = 0)
