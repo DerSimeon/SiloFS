@@ -17,9 +17,11 @@ import org.slf4j.LoggerFactory
 import org.testcontainers.containers.PostgreSQLContainer
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider
+import software.amazon.awssdk.core.checksums.RequestChecksumCalculation
 import software.amazon.awssdk.http.apache.ApacheHttpClient
 import software.amazon.awssdk.regions.Region
 import software.amazon.awssdk.services.s3.S3Client
+import software.amazon.awssdk.services.s3.S3Configuration
 import java.nio.file.Files
 import java.nio.file.Path
 
@@ -114,7 +116,13 @@ abstract class AbstractS3ServerTest {
             .region(Region.of(REGION))
             .credentialsProvider(StaticCredentialsProvider.create(AwsBasicCredentials.create(ACCESS_KEY, SECRET_KEY)))
             .endpointOverride(java.net.URI.create(endpoint))
-            .serviceConfiguration { it.pathStyleAccessEnabled(true) }
+            .requestChecksumCalculation(RequestChecksumCalculation.WHEN_REQUIRED)
+            .serviceConfiguration(
+                S3Configuration.builder()
+                    .pathStyleAccessEnabled(true)
+                    .chunkedEncodingEnabled(false)
+                    .build()
+            )
             .httpClient(httpClient)
             .build()
     }

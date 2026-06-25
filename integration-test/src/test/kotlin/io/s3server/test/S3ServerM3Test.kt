@@ -156,7 +156,7 @@ class S3ServerM3Test : AbstractS3ServerTest() {
     }
 
     @Test
-    fun `complete with parts out of order`() {
+    fun `complete with parts out of order is rejected`() {
         newS3Client().use { s3 ->
             val bucket = newBucket()
             s3.createBucket { it.bucket(bucket) }
@@ -169,14 +169,18 @@ class S3ServerM3Test : AbstractS3ServerTest() {
                 etags[i] = uploadPart(s3, bucket, key, init.uploadId(), i, payload)
             }
 
-            // Complete with parts in REVERSE order (3, 2, 1). The AWS SDK
-            // sorts them client-side before sending.
+            // Complete with parts in reverse order (3, 2, 1). The server
+            // rejects non-ascending part lists before entering COMPLETING.
             val parts = listOf(3, 2, 1).map { i ->
                 CompletedPart.builder().partNumber(i).eTag(etags[i]).build()
             }
-            val etag = completeUpload(s3, bucket, key, init.uploadId(), parts)
-            assertNotNull(etag)
-            assertTrue(etag.contains("-3"))
+            val ex = assertThrows<S3Exception> {
+                completeUpload(s3, bucket, key, init.uploadId(), parts)
+            }
+            assertEquals(400, ex.statusCode())
+            assertEquals("InvalidArgument", ex.awsErrorDetails().errorCode())
+
+            s3.abortMultipartUpload { it.bucket(bucket).key(key).uploadId(init.uploadId()) }
         }
     }
 
@@ -414,7 +418,9 @@ class S3ServerM3Test : AbstractS3ServerTest() {
             assertEquals(400, ex.statusCode())
             assertEquals("EntityTooSmall", ex.awsErrorDetails().errorCode())
 
-            s3.abortMultipartUpload { it.bucket(bucket).key(key).uploadId(init.uploadId()) }
+            assertThrows<NoSuchUploadException> {
+                s3.abortMultipartUpload { it.bucket(bucket).key(key).uploadId(init.uploadId()) }
+            }
         }
     }
 

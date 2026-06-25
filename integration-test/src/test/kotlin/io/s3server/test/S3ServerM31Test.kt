@@ -22,7 +22,9 @@ import software.amazon.awssdk.services.s3.presigner.model.GetObjectPresignReques
 import software.amazon.awssdk.services.s3.presigner.model.PutObjectPresignRequest
 import java.net.HttpURLConnection
 import java.net.URI
+import java.security.MessageDigest
 import java.time.Duration
+import java.util.Base64
 import java.util.UUID
 
 /**
@@ -343,23 +345,25 @@ class S3ServerM31Test : AbstractS3ServerTest() {
             val init = s3.createMultipartUpload { it.bucket(bucket).key(key) }
 
             val payload = ByteArray(partSize) { 0x42 }
+            val checksum = Base64.getEncoder().encodeToString(
+                MessageDigest.getInstance("SHA-256").digest(payload)
+            )
             val resp = s3.uploadPart(
                 UploadPartRequest.builder()
                     .bucket(bucket).key(key).uploadId(init.uploadId())
                     .partNumber(1).contentLength(payload.size.toLong())
-                    .checksumAlgorithm(software.amazon.awssdk.services.s3.model.ChecksumAlgorithm.SHA256)
+                    .checksumSHA256(checksum)
                     .build(),
                 RequestBody.fromBytes(payload)
             )
 
             // The response must echo the checksum
-            assertNotNull(resp.checksumSHA256())
-            assertTrue(resp.checksumSHA256().isNotBlank())
+            assertEquals(checksum, resp.checksumSHA256())
 
             // ListParts must also show the checksum
             val parts = s3.listParts { it.bucket(bucket).key(key).uploadId(init.uploadId()) }
             assertEquals(1, parts.parts().size)
-            assertNotNull(parts.parts()[0].checksumSHA256())
+            assertEquals(checksum, parts.parts()[0].checksumSHA256())
 
             s3.abortMultipartUpload { it.bucket(bucket).key(key).uploadId(init.uploadId()) }
         }

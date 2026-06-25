@@ -47,16 +47,20 @@ object SigV4CanonicalBuilder {
 
     fun canonicalUri(path: String): String {
         val sb = StringBuilder(path.length + 8)
-        for (c in path) {
+        val decoded = sigV4Decode(path)
+        var i = 0
+        while (i < decoded.length) {
+            val cp = decoded.codePointAt(i)
             when {
-                c == '/' -> sb.append('/')
-                c.isUnreserved() -> sb.append(c)
+                cp == '/'.code -> sb.append('/')
+                cp.isUnreservedCodePoint() -> sb.appendCodePoint(cp)
                 else -> {
-                    c.toString().toByteArray(Charsets.UTF_8).forEach { b ->
+                    String(Character.toChars(cp)).toByteArray(Charsets.UTF_8).forEach { b ->
                         sb.append('%').append("%02X".format(b))
                     }
                 }
             }
+            i += Character.charCount(cp)
         }
         return sb.toString()
     }
@@ -121,6 +125,10 @@ object SigV4CanonicalBuilder {
     private fun Char.isUnreserved(): Boolean =
         this in 'a'..'z' || this in 'A'..'Z' || this in '0'..'9' || this == '_' || this == '-' || this == '~' || this == '.'
 
+    private fun Int.isUnreservedCodePoint(): Boolean =
+        this in 'a'.code..'z'.code || this in 'A'.code..'Z'.code || this in '0'.code..'9'.code ||
+            this == '_'.code || this == '-'.code || this == '~'.code || this == '.'.code
+
     private fun decode(s: String): String = sigV4Decode(s)
 
     /**
@@ -161,11 +169,12 @@ object SigV4CanonicalBuilder {
                     i++
                 }
                 else -> {
-                    // Multi-byte UTF-8 character — encode to bytes.
-                    for (b in c.toString().toByteArray(Charsets.UTF_8)) {
+                    // Multi-byte UTF-8 code point — encode to bytes.
+                    val cp = s.codePointAt(i)
+                    for (b in String(Character.toChars(cp)).toByteArray(Charsets.UTF_8)) {
                         bytes.add(b)
                     }
-                    i++
+                    i += Character.charCount(cp)
                 }
             }
         }
@@ -181,16 +190,19 @@ object SigV4CanonicalBuilder {
 
     private fun encode(s: String): String {
         val sb = StringBuilder(s.length + 4)
-        for (c in s) {
+        var i = 0
+        while (i < s.length) {
+            val cp = s.codePointAt(i)
             when {
-                c.isUnreserved() -> sb.append(c)
+                cp.isUnreservedCodePoint() -> sb.appendCodePoint(cp)
                 else -> {
-                    val bytes = c.toString().toByteArray(Charsets.UTF_8)
+                    val bytes = String(Character.toChars(cp)).toByteArray(Charsets.UTF_8)
                     for (b in bytes) {
                         sb.append('%').append("%02X".format(b))
                     }
                 }
             }
+            i += Character.charCount(cp)
         }
         return sb.toString()
     }

@@ -124,13 +124,37 @@ object ObjectKey {
     }
 
     /**
-     * Normalise a key parsed from the path component: percent-decode and collapse
-     * multiple leading slashes. Trailing slashes are not allowed and will be
-     * rejected by [validate].
+     * Normalise a key parsed from the path component. Ktor route parameters may
+     * already be decoded, so literal '%' characters from object keys must remain
+     * valid. Decode only well-formed percent escapes and never treat '+' as a
+     * space; that is HTML form behaviour, not S3 path behaviour.
      */
     fun fromPathSegment(rawSegment: String): String {
-        val decoded = java.net.URLDecoder.decode(rawSegment, Charsets.UTF_8)
-        return decoded
+        if ('%' !in rawSegment) return rawSegment
+        val bytes = ArrayList<Byte>(rawSegment.length)
+        var i = 0
+        while (i < rawSegment.length) {
+            val c = rawSegment[i]
+            if (c == '%' && i + 2 < rawSegment.length) {
+                val hi = rawSegment[i + 1].hexValue()
+                val lo = rawSegment[i + 2].hexValue()
+                if (hi != null && lo != null) {
+                    bytes.add(((hi shl 4) or lo).toByte())
+                    i += 3
+                    continue
+                }
+            }
+            c.toString().toByteArray(Charsets.UTF_8).forEach { bytes.add(it) }
+            i++
+        }
+        return bytes.toByteArray().toString(Charsets.UTF_8)
+    }
+
+    private fun Char.hexValue(): Int? = when (this) {
+        in '0'..'9' -> this - '0'
+        in 'a'..'f' -> this - 'a' + 10
+        in 'A'..'F' -> this - 'A' + 10
+        else -> null
     }
 }
 

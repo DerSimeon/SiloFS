@@ -35,6 +35,17 @@ class RecoveryJobTest {
 
     private infix fun <A, B, C> Pair<A, B>.to(that: C): Triple<A, B, C> = Triple(first, second, that)
 
+    private fun multipartState(db: Database, uploadId: String): String =
+        db.withConnection { c ->
+            c.prepareStatement("SELECT state FROM multipart_uploads WHERE upload_id = ?").use { ps ->
+                ps.setString(1, uploadId)
+                ps.executeQuery().use { rs ->
+                    assertTrue(rs.next())
+                    rs.getString(1)
+                }
+            }
+        }
+
     @Test
     fun `sweepTempFiles removes old temps`() {
         val (store, _, _) = newSystem()
@@ -164,22 +175,48 @@ class RecoveryJobTest {
                 null,
             )
             assertTrue(repo.markMultipartCompleting(c, uploadId))
+            c.prepareStatement(
+                "UPDATE multipart_uploads SET completing_at = now() - interval '11 minutes' WHERE upload_id = ?",
+            ).use { ps ->
+                ps.setString(1, uploadId)
+                ps.executeUpdate()
+            }
         }
 
         val job = RecoveryJob(store, repo, db, multipartMaxAgeSeconds = Long.MAX_VALUE)
         job.sweepStaleMultipartUploads()
 
-        val state =
-            db.withConnection { c ->
-                c.prepareStatement("SELECT state FROM multipart_uploads WHERE upload_id = ?").use { ps ->
-                    ps.setString(1, uploadId)
-                    ps.executeQuery().use { rs ->
-                        assertTrue(rs.next())
-                        rs.getString(1)
-                    }
-                }
-            }
-        assertEquals("FAILED_COMPLETION", state)
+        assertEquals("FAILED_COMPLETION", multipartState(db, uploadId))
+    }
+
+    @Test
+    fun `sweepStaleMultipartUploads leaves fresh completing uploads alone`() {
+        val (store, repo, db) = newSystem()
+        val uploadId = app.silofs.metadata.newUploadId()
+        db.withTransaction { c ->
+            repo.createBucket(c, "b", "us-east-1", "o")
+            repo.createMultipartUpload(
+                c,
+                uploadId,
+                "b",
+                "k",
+                "application/octet-stream",
+                emptyMap(),
+                "STANDARD",
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+            )
+            assertTrue(repo.markMultipartCompleting(c, uploadId))
+        }
+
+        val job = RecoveryJob(store, repo, db, multipartMaxAgeSeconds = Long.MAX_VALUE)
+        job.sweepStaleMultipartUploads()
+
+        assertEquals("COMPLETING", multipartState(db, uploadId))
     }
 
     @Test

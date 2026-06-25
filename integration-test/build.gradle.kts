@@ -30,6 +30,10 @@ tasks.withType<Test>().configureEach {
     // The integration tests boot a real Ktor server and a real Postgres via
     // testcontainers; they are slow so we give them more headroom.
     timeout.set(Duration.ofMinutes(15))
+    // These tests share Docker Desktop/Testcontainers and several tests launch
+    // crash-only server processes. Keep the suite deterministic instead of
+    // racing Docker discovery across Gradle forks.
+    maxParallelForks = 1
     // Increase heap for the AWS SDK + testcontainers combo.
     jvmArgs("-Xmx1g")
 }

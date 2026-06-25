@@ -3,9 +3,11 @@ package app.silofs.server
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
+import io.ktor.http.content.OutgoingContent
 import io.ktor.http.withCharset
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.request.receiveStream
+import io.ktor.server.response.respond
 import io.ktor.server.response.respondText
 import app.silofs.blob.BlobStore
 import app.silofs.blob.streamRange
@@ -136,7 +138,8 @@ class MultipartHandlers(
         checksumCrc32: String? = null,
         checksumCrc32C: String? = null,
         checksumSha1: String? = null,
-        checksumSha256: String? = null
+        checksumSha256: String? = null,
+        checksumAlgorithm: String? = null
     ) = withContext(Dispatchers.IO) {
         BucketName.validate(bucket)
         ObjectKey.validate(key)
@@ -209,6 +212,12 @@ class MultipartHandlers(
                 checksumCrc32, checksumCrc32C, checksumSha1, checksumSha256,
                 blobStore
             )
+            val effectiveChecksumSha256 = checksumSha256
+                ?: if (checksumAlgorithm.equals("SHA256", ignoreCase = true)) {
+                    sha256HexToBase64(stored.sha256Hex)
+                } else {
+                    null
+                }
 
             val etag = ETag.fromMd5Bytes(stored.md5)
             withS3 {
@@ -237,7 +246,7 @@ class MultipartHandlers(
                         checksumCrc32 = checksumCrc32,
                         checksumCrc32C = checksumCrc32C,
                         checksumSha1 = checksumSha1,
-                        checksumSha256 = checksumSha256
+                        checksumSha256 = effectiveChecksumSha256
                     )
                     repo.clearBlobWriteIntent(conn, intentId)
                 }
@@ -250,7 +259,7 @@ class MultipartHandlers(
                 checksumCrc32?.let { append("x-amz-checksum-crc32", it) }
                 checksumCrc32C?.let { append("x-amz-checksum-crc32c", it) }
                 checksumSha1?.let { append("x-amz-checksum-sha1", it) }
-                checksumSha256?.let { append("x-amz-checksum-sha256", it) }
+                effectiveChecksumSha256?.let { append("x-amz-checksum-sha256", it) }
             }
             call.respondText("", ContentType.Application.Xml.withCharset(Charsets.UTF_8), HttpStatusCode.OK)
         } catch (t: Throwable) {
@@ -490,9 +499,12 @@ class MultipartHandlers(
             }
         }
         log.info("AbortMultipartUpload bucket={} key={} uploadId={}", bucket, key, uploadId)
-        call.response.headers.append(HttpHeaders.ContentLength, "0")
-        call.response.status(HttpStatusCode.NoContent)
-        call.respondText("", ContentType.Application.Xml, HttpStatusCode.NoContent)
+        call.respond(
+            object : OutgoingContent.NoContent() {
+                override val status: HttpStatusCode = HttpStatusCode.NoContent
+                override val contentLength: Long = 0
+            }
+        )
     }
 
     // ---------- ListParts ----------
@@ -531,6 +543,10 @@ class MultipartHandlers(
                 s3Tag("LastModified", S3Time.formatIso8601(p.uploadedAt))
                 s3Tag("ETag", p.etag)
                 s3TagLong("Size", p.sizeBytes)
+                p.checksumCrc32?.let { s3Tag("ChecksumCRC32", it) }
+                p.checksumCrc32C?.let { s3Tag("ChecksumCRC32C", it) }
+                p.checksumSha1?.let { s3Tag("ChecksumSHA1", it) }
+                p.checksumSha256?.let { s3Tag("ChecksumSHA256", it) }
                 s3Close("Part")
             }
         }
@@ -843,6 +859,20 @@ class MultipartHandlers(
                 }
             }
         }
+    }
+
+    private fun sha256HexToBase64(hex: String): String {
+        require(hex.length % 2 == 0) { "SHA-256 hex must have even length" }
+        val bytes = ByteArray(hex.length / 2)
+        var i = 0
+        while (i < hex.length) {
+            val hi = Character.digit(hex[i], 16)
+            val lo = Character.digit(hex[i + 1], 16)
+            require(hi >= 0 && lo >= 0) { "SHA-256 hex contains non-hex characters" }
+            bytes[i / 2] = ((hi shl 4) or lo).toByte()
+            i += 2
+        }
+        return java.util.Base64.getEncoder().encodeToString(bytes)
     }
 }
 

@@ -158,7 +158,10 @@ class RecoveryJob(
 
         val allBlobs: List<Path> =
             Files.walk(objectsDir).use { stream ->
-                stream.filter { Files.isRegularFile(it) }.toList()
+                stream
+                    .filter { Files.isRegularFile(it) }
+                    .filter { isOlderThan(it, minBlobAgeSeconds) }
+                    .toList()
             }
         if (allBlobs.isEmpty()) return
 
@@ -287,6 +290,16 @@ class RecoveryJob(
                 out
             }
         }
+    }
+
+    private fun isOlderThan(
+        path: Path,
+        ageSeconds: Long,
+    ): Boolean {
+        if (ageSeconds <= 0) return true
+        val ageMillis = ageSeconds.coerceAtMost(Long.MAX_VALUE / 1000L) * 1000L
+        val cutoff = System.currentTimeMillis() - ageMillis
+        return runCatching { Files.getLastModifiedTime(path).toMillis() < cutoff }.getOrDefault(false)
     }
 
     override fun close() {

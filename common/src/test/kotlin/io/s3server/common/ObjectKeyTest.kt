@@ -64,4 +64,11 @@ class ObjectKeyTest {
         assertEquals("hello world", ObjectKey.fromPathSegment("hello%20world"))
         assertEquals("日本語", ObjectKey.fromPathSegment("%E6%97%A5%E6%9C%AC%E8%AA%9E"))
     }
+
+    @Test
+    fun `fromPathSegment preserves literal percent and plus`() {
+        assertEquals("special!@#$%^&().txt", ObjectKey.fromPathSegment("special!@#$%^&().txt"))
+        assertEquals("a+b.txt", ObjectKey.fromPathSegment("a+b.txt"))
+        assertEquals("literal percent %.txt", ObjectKey.fromPathSegment("literal percent %.txt"))
+    }
 }

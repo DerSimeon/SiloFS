@@ -16,6 +16,6 @@ dependencies {
     add("testImplementation", "org.junit.jupiter:junit-jupiter")
     add("testImplementation", "io.kotest:kotest-assertions-core:6.2.1")
     add("testImplementation", "io.mockk:mockk:1.14.11")
-    add("testImplementation", "org.testcontainers:postgresql:1.20.3")
-    add("testImplementation", "org.testcontainers:junit-jupiter:1.20.3")
+    add("testImplementation", "org.testcontainers:postgresql:1.21.4")
+    add("testImplementation", "org.testcontainers:junit-jupiter:1.21.4")
 }

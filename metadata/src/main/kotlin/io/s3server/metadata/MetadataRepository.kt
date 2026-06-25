@@ -7,8 +7,15 @@ import app.silofs.common.ObjectMetadata
 import java.sql.Connection
 import java.sql.PreparedStatement
 import java.sql.ResultSet
+import java.sql.Timestamp
 import java.time.Instant
 import java.util.UUID
+
+private fun staleCutoff(olderThanSeconds: Long): Timestamp? {
+    val now = Instant.now()
+    if (olderThanSeconds >= now.epochSecond) return null
+    return Timestamp.from(now.minusSeconds(olderThanSeconds))
+}
 
 /**
  * The metadata repository interface. Implementations are JDBC-based.
@@ -647,16 +654,17 @@ class JdbcMetadataRepository : MetadataRepository {
         }
 
     override fun listStaleMultipartUploads(conn: Connection, olderThanSeconds: Long): List<StaleMultipart> {
+        val cutoff = staleCutoff(olderThanSeconds) ?: return emptyList()
         val sql = """
             SELECT upload_id, bucket, object_key, initiated_at
             FROM multipart_uploads
             WHERE state = 'INITIATED'
-              AND initiated_at < (now() - (? || ' seconds')::interval)
+              AND initiated_at < ?
             ORDER BY initiated_at ASC
             LIMIT 1000
         """.trimIndent()
         return conn.prepareStatement(sql).use { ps ->
-            ps.setLong(1, olderThanSeconds)
+            ps.setTimestamp(1, cutoff)
             ps.executeQuery().use { rs ->
                 val out = ArrayList<StaleMultipart>()
                 while (rs.next()) {
@@ -731,14 +739,16 @@ class JdbcMetadataRepository : MetadataRepository {
             ps.executeUpdate() > 0
         }
 
-    override fun deleteStaleBlobWriteIntents(conn: Connection, olderThanSeconds: Long): Int =
-        conn.prepareStatement(
+    override fun deleteStaleBlobWriteIntents(conn: Connection, olderThanSeconds: Long): Int {
+        val cutoff = staleCutoff(olderThanSeconds) ?: return 0
+        return conn.prepareStatement(
             "DELETE FROM blob_write_intents " +
-                "WHERE created_at < (now() - (? || ' seconds')::interval)"
+                "WHERE created_at < ?"
         ).use { ps ->
-            ps.setLong(1, olderThanSeconds)
+            ps.setTimestamp(1, cutoff)
             ps.executeUpdate()
         }
+    }
 
     override fun upsertAccessKey(conn: Connection, accessKeyId: String, secretAccessKey: String, description: String?) {
         conn.prepareStatement(
@@ -879,8 +889,13 @@ fun String.fromJson(): Map<String, String> {
     val out = LinkedHashMap<String, String>()
     var i = 1 // skip {
     while (i < s.length && s[i] != '}') {
+        while (i < s.length && s[i].isWhitespace()) i++
+        if (i >= s.length || s[i] == '}') break
         // skip comma
-        if (s[i] == ',') { i++; continue }
+        if (s[i] == ',') {
+            i++
+            while (i < s.length && s[i].isWhitespace()) i++
+        }
         require(s[i] == '"') { "Expected '\"' at $i in $s" }
         val (key, afterKey) = readJsonString(s, i)
         i = afterKey

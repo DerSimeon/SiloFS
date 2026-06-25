@@ -85,7 +85,13 @@ class S3ServerCrashRecoveryTest {
                     software.amazon.awssdk.auth.credentials.AwsBasicCredentials.create(ACCESS_KEY, SECRET_KEY)
                 ))
                 .endpointOverride(java.net.URI.create(endpoint1))
-                .serviceConfiguration { it.pathStyleAccessEnabled(true) }
+                .requestChecksumCalculation(software.amazon.awssdk.core.checksums.RequestChecksumCalculation.WHEN_REQUIRED)
+                .serviceConfiguration(
+                    software.amazon.awssdk.services.s3.S3Configuration.builder()
+                        .pathStyleAccessEnabled(true)
+                        .chunkedEncodingEnabled(false)
+                        .build()
+                )
                 .httpClientBuilder(software.amazon.awssdk.http.apache.ApacheHttpClient.builder())
                 .build()
             s3.use {
@@ -131,7 +137,13 @@ class S3ServerCrashRecoveryTest {
                     software.amazon.awssdk.auth.credentials.AwsBasicCredentials.create(ACCESS_KEY, SECRET_KEY)
                 ))
                 .endpointOverride(java.net.URI.create(endpoint2))
-                .serviceConfiguration { it.pathStyleAccessEnabled(true) }
+                .requestChecksumCalculation(software.amazon.awssdk.core.checksums.RequestChecksumCalculation.WHEN_REQUIRED)
+                .serviceConfiguration(
+                    software.amazon.awssdk.services.s3.S3Configuration.builder()
+                        .pathStyleAccessEnabled(true)
+                        .chunkedEncodingEnabled(false)
+                        .build()
+                )
                 .httpClientBuilder(software.amazon.awssdk.http.apache.ApacheHttpClient.builder())
                 .build()
             s3b.use {

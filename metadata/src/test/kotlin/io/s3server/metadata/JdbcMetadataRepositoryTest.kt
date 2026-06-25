@@ -409,6 +409,14 @@ class JsonHelpersTest {
     }
 
     @Test
+    fun `json parser accepts database formatted whitespace`() {
+        assertEquals(
+            linkedMapOf("author" to "test", "purpose" to "smoke"),
+            """{"author": "test", "purpose": "smoke" }""".fromJson()
+        )
+    }
+
+    @Test
     fun `round trip preserves order`() {
         val m = linkedMapOf("c" to "1", "a" to "2", "b" to "3")
         val parsed = m.toJson().fromJson()

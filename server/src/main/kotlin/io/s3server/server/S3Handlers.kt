@@ -3,9 +3,11 @@ package app.silofs.server
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
+import io.ktor.http.content.OutgoingContent
 import io.ktor.http.withCharset
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.request.receiveStream
+import io.ktor.server.response.respond
 import io.ktor.server.response.respondOutputStream
 import io.ktor.server.response.respondText
 import app.silofs.blob.BlobStore
@@ -87,7 +89,11 @@ class S3Handlers(
         }
         if (!exists) throw S3Errors.noSuchBucket(bucket)
         call.response.headers.append("x-amz-bucket-region", config.region)
-        call.respondText("", ContentType.Application.Xml, HttpStatusCode.OK)
+        call.respond(
+            object : OutgoingContent.NoContent() {
+                override val status: HttpStatusCode = HttpStatusCode.OK
+            }
+        )
     }
 
     suspend fun deleteBucket(call: ApplicationCall, bucket: String): Unit = withContext(Dispatchers.IO) {
@@ -100,9 +106,12 @@ class S3Handlers(
                 repo.deleteBucket(conn, bucket)
             }
         }
-        call.response.headers.append(HttpHeaders.ContentLength, "0")
-        call.response.status(HttpStatusCode.NoContent)
-        call.respondText("", ContentType.Application.Xml, HttpStatusCode.NoContent)
+        call.respond(
+            object : OutgoingContent.NoContent() {
+                override val status: HttpStatusCode = HttpStatusCode.NoContent
+                override val contentLength: Long = 0
+            }
+        )
     }
 
     suspend fun listBuckets(call: ApplicationCall) = withContext(Dispatchers.IO) {
@@ -604,7 +613,6 @@ class S3Handlers(
         call.response.headers.apply {
             append(HttpHeaders.ETag, meta.etag)
             append(HttpHeaders.LastModified, S3Time.formatHttpDate(meta.createdAt))
-            append(HttpHeaders.ContentType, meta.contentType)
             append(HttpHeaders.AcceptRanges, "bytes")
             meta.contentEncoding?.let { append(HttpHeaders.ContentEncoding, it) }
             meta.contentLanguage?.let { append(HttpHeaders.ContentLanguage, it) }
@@ -689,7 +697,6 @@ class S3Handlers(
             append(HttpHeaders.ETag, meta.etag)
             append(HttpHeaders.LastModified, S3Time.formatHttpDate(meta.createdAt))
             append(HttpHeaders.ContentType, meta.contentType)
-            append(HttpHeaders.ContentLength, size.toString())
             append(HttpHeaders.AcceptRanges, "bytes")
             meta.contentEncoding?.let { append(HttpHeaders.ContentEncoding, it) }
             meta.contentLanguage?.let { append(HttpHeaders.ContentLanguage, it) }
@@ -707,7 +714,13 @@ class S3Handlers(
             meta.checksumSha256?.let { append("x-amz-checksum-sha256", it) }
             meta.checksumType?.let { append("x-amz-checksum-type", it) }
         }
-        call.respondText("", ContentType.Application.Xml, HttpStatusCode.OK)
+        call.respond(
+            object : OutgoingContent.NoContent() {
+                override val status: HttpStatusCode = HttpStatusCode.OK
+                override val contentLength: Long = size
+                override val contentType: ContentType = ContentType.parse(meta.contentType)
+            }
+        )
     }
 
     suspend fun deleteObject(call: ApplicationCall, bucket: String, key: String) = withContext(Dispatchers.IO) {

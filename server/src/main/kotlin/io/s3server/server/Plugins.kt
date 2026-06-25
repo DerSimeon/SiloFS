@@ -3,6 +3,7 @@ package app.silofs.server
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
+import io.ktor.http.content.OutgoingContent
 import io.ktor.http.withCharset
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.server.application.Application
@@ -15,6 +16,7 @@ import io.ktor.server.plugins.partialcontent.PartialContent
 import io.ktor.server.plugins.statuspages.StatusPages
 import io.ktor.server.request.httpMethod
 import io.ktor.server.request.path
+import io.ktor.server.response.respond
 import io.ktor.server.response.respondText
 import app.silofs.auth.SigV4Auth
 import app.silofs.common.RequestIds
@@ -81,8 +83,12 @@ fun Application.installPlugins(config: ServerConfig) {
             }
             // For 304 Not Modified the body must be empty (RFC 7232 §4.1).
             if (cause.errorCode == S3ErrorCode.NotModified) {
-                call.response.status(HttpStatusCode.NotModified)
-                call.response.headers.append(HttpHeaders.ContentLength, "0")
+                call.respond(
+                    object : OutgoingContent.NoContent() {
+                        override val status: HttpStatusCode = HttpStatusCode.NotModified
+                        override val contentLength: Long = 0
+                    }
+                )
                 return@exception
             }
             val body = s3XmlDocument("Error") {

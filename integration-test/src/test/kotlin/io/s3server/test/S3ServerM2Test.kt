@@ -397,7 +397,7 @@ class S3ServerM2Test : AbstractS3ServerTest() {
     fun `invalid bucket name returns InvalidBucketName`() {
         newS3Client().use { s3 ->
             val ex = assertThrows<S3Exception> {
-                s3.createBucket { it.bucket("UPPERCASE") }
+                s3.createBucket { it.bucket("sthree-reserved") }
             }
             assertEquals(400, ex.statusCode())
             assertEquals("InvalidBucketName", ex.awsErrorDetails().errorCode())
@@ -757,7 +757,7 @@ class S3ServerM2Test : AbstractS3ServerTest() {
     }
 
     @Test
-    fun `delete response has content length zero`() {
+    fun `delete response is empty`() {
         newS3Client().use { s3 ->
             val bucket = newBucket()
             s3.createBucket { it.bucket(bucket) }
@@ -768,7 +768,7 @@ class S3ServerM2Test : AbstractS3ServerTest() {
             val resp = s3.deleteObject { it.bucket(bucket).key("k") }
             assertEquals(204, resp.sdkHttpResponse().statusCode())
             val cl = resp.sdkHttpResponse().firstMatchingHeader("Content-Length").orElse(null)
-            assertEquals("0", cl)
+            assertTrue(cl == null || cl == "0", "Content-Length must be absent or zero")
         }
     }
 

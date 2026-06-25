@@ -88,7 +88,7 @@ data class CanonicalRequest(
     val payloadHash: String
 ) {
     fun canonicalString(): String =
-        listOf(method, canonicalUri, canonicalQueryString, canonicalHeaders, "", signedHeaders, payloadHash)
+        listOf(method, canonicalUri, canonicalQueryString, canonicalHeaders, signedHeaders, payloadHash)
             .joinToString("\n")
 
     fun stringToSign(amzDate: String, dateStamp: String, region: String, service: String): String {

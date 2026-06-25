@@ -178,6 +178,23 @@ class SigV4CanonicalBuilderTest {
     fun `canonical uri percent encodes special chars`() {
         assertEquals("/bucket/hello%20world", SigV4CanonicalBuilder.canonicalUri("/bucket/hello world"))
         assertEquals("/bucket/a%2Bb", SigV4CanonicalBuilder.canonicalUri("/bucket/a+b"))
+        assertEquals("/bucket/emoji-%F0%9F%8E%89.txt", SigV4CanonicalBuilder.canonicalUri("/bucket/emoji-🎉.txt"))
+    }
+
+    @Test
+    fun `canonical uri does not double encode request path escapes`() {
+        assertEquals(
+            "/bucket/spaces%20in%20name.txt",
+            SigV4CanonicalBuilder.canonicalUri("/bucket/spaces%20in%20name.txt")
+        )
+        assertEquals(
+            "/bucket/unicode-%E6%97%A5%E6%9C%AC%E8%AA%9E.txt",
+            SigV4CanonicalBuilder.canonicalUri("/bucket/unicode-%E6%97%A5%E6%9C%AC%E8%AA%9E.txt")
+        )
+        assertEquals(
+            "/bucket/literal%2520percent.txt",
+            SigV4CanonicalBuilder.canonicalUri("/bucket/literal%2520percent.txt")
+        )
     }
 
     @Test
@@ -235,6 +252,30 @@ class SigV4CanonicalBuilderTest {
         assertEquals("x=1", canonical.canonicalQueryString)
         assertEquals("host;x-amz-content-sha256;x-amz-date", canonical.signedHeaders)
         assertEquals("UNSIGNED-PAYLOAD", canonical.payloadHash)
+    }
+
+    @Test
+    fun `canonical string has exactly one blank line before signed headers`() {
+        val canonical = CanonicalRequest(
+            method = "PUT",
+            canonicalUri = "/bucket",
+            canonicalQueryString = "",
+            canonicalHeaders = "host:localhost:8080\nx-amz-date:20240604T123456Z\n",
+            signedHeaders = "host;x-amz-date",
+            payloadHash = "UNSIGNED-PAYLOAD"
+        )
+
+        assertEquals(
+            "PUT\n" +
+                "/bucket\n" +
+                "\n" +
+                "host:localhost:8080\n" +
+                "x-amz-date:20240604T123456Z\n" +
+                "\n" +
+                "host;x-amz-date\n" +
+                "UNSIGNED-PAYLOAD",
+            canonical.canonicalString()
+        )
     }
 
     @Test

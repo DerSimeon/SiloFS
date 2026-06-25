@@ -183,6 +183,9 @@ fun Application.s3Routes(config: ServerConfig, handlers: S3Handlers, multipart: 
                     val checksumCrc32C = call.request.headers["x-amz-checksum-crc32c"]
                     val checksumSha1 = call.request.headers["x-amz-checksum-sha1"]
                     val checksumSha256 = call.request.headers["x-amz-checksum-sha256"]
+                    val checksumAlgorithm =
+                        call.request.headers["x-amz-sdk-checksum-algorithm"]
+                            ?: call.request.headers["x-amz-checksum-algorithm"]
                     multipart.uploadPart(
                         call = call,
                         bucket = bucket,
@@ -195,7 +198,8 @@ fun Application.s3Routes(config: ServerConfig, handlers: S3Handlers, multipart: 
                         checksumCrc32 = checksumCrc32,
                         checksumCrc32C = checksumCrc32C,
                         checksumSha1 = checksumSha1,
-                        checksumSha256 = checksumSha256
+                        checksumSha256 = checksumSha256,
+                        checksumAlgorithm = checksumAlgorithm
                     )
                     return@put
                 }
@@ -292,6 +296,13 @@ fun Application.s3Routes(config: ServerConfig, handlers: S3Handlers, multipart: 
                     checksumType = checksumType
                 )
             }
+            head {
+                val bucket = call.parameters["bucket"]!!
+                val decodedKey = ObjectKey.fromPathSegment(joinPath(call.parameters.getAll("key") ?: emptyList()))
+                val ifMatch = call.request.headers[HttpHeaders.IfMatch]
+                val ifNoneMatch = call.request.headers[HttpHeaders.IfNoneMatch]
+                handlers.headObject(call, bucket, decodedKey, ifMatch, ifNoneMatch)
+            }
             get {
                 val bucket = call.parameters["bucket"]!!
                 val decodedKey = ObjectKey.fromPathSegment(joinPath(call.parameters.getAll("key") ?: emptyList()))
@@ -305,13 +316,6 @@ fun Application.s3Routes(config: ServerConfig, handlers: S3Handlers, multipart: 
                 val ifMatch = call.request.headers[HttpHeaders.IfMatch]
                 val ifNoneMatch = call.request.headers[HttpHeaders.IfNoneMatch]
                 handlers.getObject(call, bucket, decodedKey, range, ifMatch, ifNoneMatch)
-            }
-            head {
-                val bucket = call.parameters["bucket"]!!
-                val decodedKey = ObjectKey.fromPathSegment(joinPath(call.parameters.getAll("key") ?: emptyList()))
-                val ifMatch = call.request.headers[HttpHeaders.IfMatch]
-                val ifNoneMatch = call.request.headers[HttpHeaders.IfNoneMatch]
-                handlers.headObject(call, bucket, decodedKey, ifMatch, ifNoneMatch)
             }
             delete {
                 val bucket = call.parameters["bucket"]!!
