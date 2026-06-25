@@ -275,6 +275,8 @@ The same contract applies to `UploadPart` and `CompleteMultipartUpload`.
 * No object versioning, ACLs, IAM, lifecycle, replication, or erasure coding — out of scope
 
 See [docs/COMPATIBILITY_M6.md](docs/COMPATIBILITY_M6.md) for the tested client matrix and [docs/MILESTONES.md](docs/MILESTONES.md) for the full M7-M9 roadmap.
+The bounded production-candidate sign-off is documented in
+[docs/PRODUCTION_READINESS_M9.md](docs/PRODUCTION_READINESS_M9.md).
 
 ## Architecture
 

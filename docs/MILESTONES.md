@@ -600,6 +600,12 @@ Known gaps at end of M8.5:
 
 Final sign-off milestone. This does not add many features. It proves the system is safe enough for the declared deployment envelope.
 
+Status: complete for the documented single-node production-candidate envelope.
+The sign-off artifact is `docs/PRODUCTION_READINESS_M9.md`, including declared
+limits, durability/security/backup evidence, monitoring and alerting guidance,
+failure response, unsupported features, release verification commands, and the
+one-class-per-file check.
+
 Deliverables:
 
 - production readiness checklist

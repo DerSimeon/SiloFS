@@ -14,25 +14,6 @@ import javax.crypto.CipherOutputStream
 import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
 
-data class BlobEncryptionMetadata(
-    val mode: String,
-    val keyId: String,
-    val nonce: ByteArray,
-) {
-    override fun equals(other: Any?): Boolean {
-        if (this === other) return true
-        if (other !is BlobEncryptionMetadata) return false
-        return mode == other.mode && keyId == other.keyId && nonce.contentEquals(other.nonce)
-    }
-
-    override fun hashCode(): Int {
-        var result = mode.hashCode()
-        result = 31 * result + keyId.hashCode()
-        result = 31 * result + nonce.contentHashCode()
-        return result
-    }
-}
-
 class ObjectEncryption(
     private val masterKey: ByteArray,
     val keyId: String = DEFAULT_KEY_ID,
@@ -58,7 +39,7 @@ class ObjectEncryption(
             out.write(ByteBuffer.wrap(header))
             val cipher = cipher(Cipher.ENCRYPT_MODE, nonce)
             cipher.updateAAD(aadBytes(nonce, keyIdBytes, plaintextSize, sha))
-            CipherOutputStream(NonClosingOutputStream(Channels.newOutputStream(out)), cipher).use { cipherOut ->
+            CipherOutputStream(nonClosing(Channels.newOutputStream(out)), cipher).use { cipherOut ->
                 Files.newInputStream(plaintextPath).use { input -> input.copyTo(cipherOut) }
             }
             out.force(true)
@@ -195,12 +176,13 @@ class ObjectEncryption(
     }
 }
 
-private class NonClosingOutputStream(private val delegate: OutputStream) : OutputStream() {
-    override fun write(b: Int) = delegate.write(b)
+private fun nonClosing(delegate: OutputStream): OutputStream =
+    object : OutputStream() {
+        override fun write(b: Int) = delegate.write(b)
 
-    override fun write(b: ByteArray, off: Int, len: Int) = delegate.write(b, off, len)
+        override fun write(b: ByteArray, off: Int, len: Int) = delegate.write(b, off, len)
 
-    override fun flush() = delegate.flush()
+        override fun flush() = delegate.flush()
 
-    override fun close() = delegate.flush()
-}
+        override fun close() = delegate.flush()
+    }
