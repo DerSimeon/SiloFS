@@ -5,7 +5,7 @@ Kotlin with Ktor, coroutines, PostgreSQL for metadata, and a local filesystem
 for blob storage. Designed to be testable against the real AWS SDK for Java v2,
 boto3, and the AWS CLI.
 
-> **Status**: Milestones 1 through 3.1 delivered. See [docs/MILESTONES.md](docs/MILESTONES.md)
+> **Status**: Milestones 1 through 5 delivered for the single-node envelope. See [docs/MILESTONES.md](docs/MILESTONES.md)
 > for the roadmap and [docs/S3_FEATURES.md](docs/S3_FEATURES.md) for the
 > supported/unsupported matrix.
 
@@ -158,6 +158,12 @@ All settings are env vars; no config file is required.
 | `S3_RECOVERY_MULTIPART_MAX_AGE_SECONDS` | `86400`                              | Stale multipart uploads older than this are aborted |
 | `S3_RECOVERY_SWEEP_INTERVAL_SECONDS`  | `60`                                   | How often the sweep runs                 |
 | `S3_RECOVERY_BLOB_SWEEP_INTERVAL_SECONDS` | `600`                              | How often unreferenced blobs are swept   |
+| `S3_MAX_CONCURRENT_UPLOADS`          | `64`                                   | Global concurrent PutObject/CopyObject/UploadPart/UploadPartCopy limit |
+| `S3_MAX_CONCURRENT_MULTIPART_COMPLETIONS` | `8`                              | Global concurrent CompleteMultipartUpload limit |
+| `S3_COMPLETE_XML_MAX_BYTES`          | `1048576`                              | Max CompleteMultipartUpload XML body size before parsing |
+| `S3_MIN_FREE_DISK_BYTES`             | `0`                                    | Minimum usable bytes required for `/readyz` |
+| `S3_SHUTDOWN_QUIET_PERIOD_MS`        | `1000`                                 | Ktor shutdown quiet period before force timeout |
+| `S3_SHUTDOWN_TIMEOUT_MS`             | `5000`                                 | Shutdown drain/force timeout             |
 
 ## Durability contract
 
@@ -174,14 +180,14 @@ When `PutObject` returns 200:
 
 The same contract applies to `UploadPart` and `CompleteMultipartUpload`.
 
-## Known limitations (post-M3.1)
+## Known limitations (post-M5)
 
-* No streaming SigV4 (`aws-chunked` payloads) — compatibility milestone
-* No virtual-host style addressing — compatibility milestone
+* No streaming SigV4 (`aws-chunked` payloads) — M6 if required by the supported client matrix
+* No virtual-host style addressing — M6 if required by the supported client matrix
 * No server-side encryption (SSE-S3/SSE-C) — M7
 * No object versioning, ACLs, IAM, lifecycle, replication, or erasure coding — out of scope
 
-See [docs/MILESTONES.md](docs/MILESTONES.md) for the full M4–M7 roadmap.
+See [docs/MILESTONES.md](docs/MILESTONES.md) for the full M6–M9 roadmap.
 
 ## Architecture
 
@@ -208,10 +214,13 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Key points:
 * **Admin inspection**: `s3server admin check-blobs` reports missing referenced
   blobs and orphan content blobs without mutating data; `s3server admin
   recover-once` runs one recovery sweep and exits.
+* **Operational limits**: global upload and multipart-completion limiters
+  return S3 `SlowDown` (503) when saturated. `/readyz` checks DB, data-dir
+  writeability, and free disk. `/metricsz` exports request, limiter, DB pool,
+  recovery, and blob-store counters.
 
 ## Next steps
 
-1. Run `./gradlew :integration-test:test` to confirm the SDK smoke suite is
-   green.
-2. Continue M4 durability work: expand crash/race coverage, run repeated
-   recovery tests, and keep docs aligned with [docs/MILESTONES.md](docs/MILESTONES.md).
+1. Expand the declared M6 client matrix and run it against the exact clients
+   that will be supported.
+2. Start M7 security hardening before storing real user data.

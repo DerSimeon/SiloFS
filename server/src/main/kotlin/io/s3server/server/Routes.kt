@@ -4,8 +4,9 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.Application
+import io.ktor.server.application.ApplicationCall
 import io.ktor.server.application.call
-import io.ktor.server.request.receiveText
+import io.ktor.server.request.receiveStream
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.delete
 import io.ktor.server.routing.get
@@ -17,6 +18,7 @@ import io.ktor.server.routing.routing
 import app.silofs.common.ObjectKey
 import app.silofs.common.S3Errors
 import app.silofs.common.S3Exception
+import java.io.ByteArrayOutputStream
 import java.util.Locale
 
 /**
@@ -138,7 +140,7 @@ fun Application.s3Routes(config: ServerConfig, handlers: S3Handlers, multipart: 
                     }
                     uploadId != null -> {
                         // CompleteMultipartUpload — parse XML body for part list.
-                        val body = call.receiveText()
+                        val body = call.receiveBoundedText(config.operationalConfig.completeXmlMaxBytes)
                         val parts = parseCompleteMultipartUploadXml(body)
                         multipart.completeMultipartUpload(call, bucket, decodedKey, uploadId, parts)
                     }
@@ -336,6 +338,29 @@ fun Application.s3Routes(config: ServerConfig, handlers: S3Handlers, multipart: 
 private fun joinPath(segments: List<String>): String {
     if (segments.isEmpty()) return ""
     return segments.joinToString("/")
+}
+
+internal suspend fun ApplicationCall.receiveBoundedText(maxBytes: Long): String {
+    val declared = request.headers[HttpHeaders.ContentLength]?.toLongOrNull()
+    if (declared != null && declared > maxBytes) {
+        throw S3Errors.maxMessageLengthExceeded(declared, maxBytes)
+    }
+
+    val buffer = ByteArray(8 * 1024)
+    val out = ByteArrayOutputStream()
+    var total = 0L
+    receiveStream().use { input ->
+        while (true) {
+            val read = input.read(buffer)
+            if (read < 0) break
+            total += read.toLong()
+            if (total > maxBytes) {
+                throw S3Errors.maxMessageLengthExceeded(total, maxBytes)
+            }
+            out.write(buffer, 0, read)
+        }
+    }
+    return out.toString(Charsets.UTF_8)
 }
 
 /**

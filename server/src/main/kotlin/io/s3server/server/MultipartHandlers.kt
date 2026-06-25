@@ -140,7 +140,7 @@ class MultipartHandlers(
         checksumSha1: String? = null,
         checksumSha256: String? = null,
         checksumAlgorithm: String? = null
-    ) = withContext(Dispatchers.IO) {
+    ) = withUploadPermit {
         BucketName.validate(bucket)
         ObjectKey.validate(key)
 
@@ -264,6 +264,7 @@ class MultipartHandlers(
             call.respondText("", ContentType.Application.Xml.withCharset(Charsets.UTF_8), HttpStatusCode.OK)
         } catch (t: Throwable) {
             intentId?.let { clearBlobWriteIntentQuietly(it) }
+            config.operationalState.recordBlobStoreError()
             write.abort()
             throw t.toS3()
         }
@@ -292,7 +293,7 @@ class MultipartHandlers(
         key: String,
         uploadId: String,
         requestedParts: List<RequestedPart>
-    ) = withContext(Dispatchers.IO) {
+    ) = withMultipartCompletionPermit {
         BucketName.validate(bucket)
         ObjectKey.validate(key)
 
@@ -646,7 +647,7 @@ class MultipartHandlers(
         partNumber: Int,
         copySource: String,
         copySourceRange: String?
-    ) = withContext(Dispatchers.IO) {
+    ) = withUploadPermit {
         BucketName.validate(destBucket)
         ObjectKey.validate(destKey)
 
@@ -747,6 +748,7 @@ class MultipartHandlers(
             call.respondText(body, ContentType.Application.Xml.withCharset(Charsets.UTF_8), HttpStatusCode.OK)
         } catch (t: Throwable) {
             copyIntentId?.let { clearBlobWriteIntentQuietly(it) }
+            config.operationalState.recordBlobStoreError()
             write.abort()
             throw t.toS3()
         }
@@ -755,6 +757,16 @@ class MultipartHandlers(
     // ---------- Helpers ----------
 
     private data class PublishedBlob(val stored: app.silofs.blob.StoredBlob, val intentId: String)
+
+    private suspend fun <T> withUploadPermit(block: suspend () -> T): T =
+        config.operationalState.withUploadPermit {
+            withContext(Dispatchers.IO) { block() }
+        }
+
+    private suspend fun <T> withMultipartCompletionPermit(block: suspend () -> T): T =
+        config.operationalState.withMultipartCompletionPermit {
+            withContext(Dispatchers.IO) { block() }
+        }
 
     private fun publishWithIntent(write: app.silofs.blob.BlobWrite): PublishedBlob {
         val writeImpl = write as app.silofs.blob.FsBlobWrite

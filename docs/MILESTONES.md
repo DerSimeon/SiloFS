@@ -286,6 +286,8 @@ Known gaps at end of M3.1:
 
 This milestone is mandatory before adding more broad compatibility or production-ops features. The goal is to prove that successful writes remain recoverable after crashes, restarts, failed transactions, GC, and multipart races.
 
+Status: complete for the declared single-node architecture. The implementation now has DB-backed blob write intents, quarantine-before-delete GC, repeated failpoint crash coverage, recovery idempotency tests, and multipart race tests for completion/abort/part-upload races.
+
 Deliverables:
 
 - blob lifecycle design that prevents GC from deleting in-flight commits
@@ -357,11 +359,13 @@ Known gaps at end of M4:
 - No virtual-host addressing unless already added
 - No streaming SigV4 / `aws-chunked`
 - compatibility matrix still limited
-- operational observability still basic
+- backup/restore and security hardening are still later milestones
 
 ## Milestone 5 — operational hardening
 
 Make the service operable as a single-node system.
+
+Status: complete for the current single-node envelope. The server now tracks in-flight requests/uploads/completions, enforces upload and multipart-completion concurrency limits with S3 `SlowDown`, bounds CompleteMultipartUpload XML bodies, probes DB/data-dir/free-disk readiness, exports limiter/DB/recovery/blob-store metrics, logs request id/operation/status/latency/bytes, and drains in-flight requests during graceful shutdown.
 
 Deliverables:
 
@@ -407,6 +411,8 @@ Known gaps at end of M5:
 - broad SDK/client compatibility matrix still incomplete
 - security hardening still incomplete
 - backup/restore tooling still incomplete
+- structured logs are key-value SLF4J/logback events; deployments that require strict JSON must keep the JSON encoder configuration enabled
+- per-bucket quota support is not implemented because no deployment target has required it yet
 
 ## Milestone 6 — compatibility matrix expansion
 

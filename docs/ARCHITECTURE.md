@@ -180,10 +180,24 @@ configured via env vars.
 * Single configurable data directory, default `/var/lib/s3server/data`.
 * Postgres connection via HikariCP, with Flyway applying migrations on boot.
 * Structured logging via SLF4J + Logback JSON encoder.
+* Every non-internal request is classified into an S3 operation name for logs
+  and metrics. Access logs include request id, operation, status, latency,
+  declared request bytes, and declared response bytes.
 * Liveness endpoint at `GET /healthz` (no SigV4) for Docker Compose.
 * Readiness endpoint at `GET /readyz` (no SigV4) that probes PostgreSQL and
-  write access to the configured data directory.
+  write access to the configured data directory, then verifies usable disk
+  space is at least `S3_MIN_FREE_DISK_BYTES`.
 * Metrics endpoint at `GET /metricsz` (Prometheus text format, no SigV4) with
   gauges for active multipart uploads, orphan temp files, quarantined blobs,
   and blob data directory bytes, plus request counters, request/response byte
-  counters, and latency histograms labelled by S3 operation and HTTP status.
+  counters, latency histograms labelled by S3 operation and HTTP status,
+  in-flight request/upload/completion gauges, limiter rejection counters,
+  recovery sweep counters, blob-store error counters, and HikariCP pool gauges.
+* Global semaphores bound concurrent object/part uploads and multipart
+  completions. When saturated, handlers return S3 `SlowDown` (HTTP 503) before
+  beginning blob publication.
+* `CompleteMultipartUpload` XML bodies are capped by
+  `S3_COMPLETE_XML_MAX_BYTES` before SAX parsing.
+* Graceful shutdown flips the server into drain mode, stops accepting new work,
+  waits for Ktor's configured quiet period and timeout, waits for in-flight
+  accounting to reach zero, stops the recovery job, and closes the DB pool.

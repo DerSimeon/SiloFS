@@ -229,7 +229,7 @@ class S3Handlers(
         checksumSha1: String?,
         checksumSha256: String?,
         checksumType: String?
-    ) = withContext(Dispatchers.IO) {
+    ) = withUploadPermit {
         BucketName.validate(bucket)
         ObjectKey.validate(key)
 
@@ -385,6 +385,7 @@ class S3Handlers(
             call.respondText("", ContentType.Application.Xml.withCharset(Charsets.UTF_8), HttpStatusCode.OK)
         } catch (t: Throwable) {
             intentId?.let { clearBlobWriteIntentQuietly(it) }
+            config.operationalState.recordBlobStoreError()
             write.abort()
             throw t.toS3()
         }
@@ -419,7 +420,7 @@ class S3Handlers(
         ifNoneMatch: String?,
         ifModifiedSince: String?,
         ifUnmodifiedSince: String?
-    ) = withContext(Dispatchers.IO) {
+    ) = withUploadPermit {
         BucketName.validate(destBucket)
         ObjectKey.validate(destKey)
 
@@ -562,6 +563,7 @@ class S3Handlers(
             call.respondText(body, ContentType.Application.Xml.withCharset(Charsets.UTF_8), HttpStatusCode.OK)
         } catch (t: Throwable) {
             copyIntentId?.let { clearBlobWriteIntentQuietly(it) }
+            config.operationalState.recordBlobStoreError()
             write.abort()
             throw t.toS3()
         }
@@ -741,6 +743,11 @@ class S3Handlers(
     }
 
     private data class PublishedBlob(val stored: app.silofs.blob.StoredBlob, val intentId: String)
+
+    private suspend fun <T> withUploadPermit(block: suspend () -> T): T =
+        config.operationalState.withUploadPermit {
+            withContext(Dispatchers.IO) { block() }
+        }
 
     private fun publishWithIntent(write: app.silofs.blob.BlobWrite): PublishedBlob {
         val writeImpl = write as app.silofs.blob.FsBlobWrite

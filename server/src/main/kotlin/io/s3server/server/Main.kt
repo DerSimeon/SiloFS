@@ -34,7 +34,7 @@ fun main(args: Array<String>) {
             sweepIntervalSeconds = config.recoveryConfig.sweepIntervalSeconds,
             blobSweepIntervalSeconds = config.recoveryConfig.blobSweepIntervalSeconds
         ).also {
-            it.runOnce()
+            runRecoveryOnce(it, config)
             it.start()
         }
     } else null
@@ -48,7 +48,18 @@ fun main(args: Array<String>) {
     }
     Runtime.getRuntime().addShutdownHook(Thread {
         log.info("Shutting down")
-        server.stop(1000, 5000)
+        config.operationalState.beginShutdown()
+        server.stop(
+            config.operationalConfig.shutdownQuietPeriodMs,
+            config.operationalConfig.shutdownTimeoutMs,
+        )
+        val drained = config.operationalState.awaitRequestDrain(config.operationalConfig.shutdownTimeoutMs)
+        if (!drained) {
+            log.warn(
+                "Shutdown drain timed out with {} in-flight request(s)",
+                config.operationalState.inFlightRequests,
+            )
+        }
         recovery?.close()
         config.database.close()
     })
@@ -77,7 +88,7 @@ internal fun runAdminCommand(args: Array<String>, config: ServerConfig): Int =
                 multipartMaxAgeSeconds = config.recoveryConfig.multipartMaxAgeSeconds,
                 sweepIntervalSeconds = config.recoveryConfig.sweepIntervalSeconds,
                 blobSweepIntervalSeconds = config.recoveryConfig.blobSweepIntervalSeconds,
-            ).use { it.runOnce() }
+            ).use { runRecoveryOnce(it, config) }
             println("recovery=ok")
             0
         }
@@ -88,3 +99,13 @@ internal fun runAdminCommand(args: Array<String>, config: ServerConfig): Int =
     }.also {
         config.database.close()
     }
+
+private fun runRecoveryOnce(job: RecoveryJob, config: ServerConfig) {
+    try {
+        job.runOnce()
+        config.operationalState.recordRecoverySweep(success = true)
+    } catch (t: Throwable) {
+        config.operationalState.recordRecoverySweep(success = false)
+        throw t
+    }
+}

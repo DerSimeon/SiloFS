@@ -64,6 +64,17 @@ class Database(
         }
     }
 
+    fun poolStats(): DbPoolStats? {
+        val hikari = dataSource as? HikariDataSource ?: return null
+        val bean = hikari.hikariPoolMXBean ?: return null
+        return DbPoolStats(
+            activeConnections = bean.activeConnections,
+            idleConnections = bean.idleConnections,
+            totalConnections = bean.totalConnections,
+            threadsAwaitingConnection = bean.threadsAwaitingConnection,
+        )
+    }
+
     override fun close() {
         if (dataSource is HikariDataSource) {
             dataSource.close()
@@ -91,6 +102,13 @@ class Database(
         }
     }
 }
+
+data class DbPoolStats(
+    val activeConnections: Int,
+    val idleConnections: Int,
+    val totalConnections: Int,
+    val threadsAwaitingConnection: Int,
+)
 
 /**
  * Wraps a checked SQL exception in [S3Exception] so the HTTP layer can render it

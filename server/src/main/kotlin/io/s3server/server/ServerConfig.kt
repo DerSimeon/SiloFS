@@ -23,6 +23,8 @@ data class ServerConfig(
     val repository: JdbcMetadataRepository,
     val credentialProvider: CredentialProvider,
     val recoveryConfig: RecoveryConfig,
+    val operationalConfig: OperationalConfig = OperationalConfig.fromEnv(),
+    val operationalState: OperationalState = OperationalState(operationalConfig),
     val requestMetrics: RequestMetricsRegistry = RequestMetricsRegistry(),
     val sigv4MaxClockSkewSeconds: Long = 900L
 ) {
@@ -59,6 +61,7 @@ data class ServerConfig(
                 repository = repo,
                 credentialProvider = credentialProvider,
                 recoveryConfig = RecoveryConfig.fromEnv(),
+                operationalConfig = OperationalConfig.fromEnv(),
                 sigv4MaxClockSkewSeconds = maxClockSkew
             )
         }

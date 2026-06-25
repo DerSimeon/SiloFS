@@ -74,6 +74,9 @@ object S3Errors {
     fun entityTooLarge(actual: Long, max: Long): S3Exception =
         S3Exception(S3ErrorCode.EntityTooLarge, "Your proposed upload exceeds the maximum allowed object size. actual=$actual max=$max")
 
+    fun maxMessageLengthExceeded(actual: Long, max: Long): S3Exception =
+        S3Exception(S3ErrorCode.MaxMessageLengthExceeded, "Your request body was too large. actual=$actual max=$max")
+
     fun preconditionFailed(headerName: String, etag: String?): S3Exception =
         S3Exception(
             S3ErrorCode.PreconditionFailed,

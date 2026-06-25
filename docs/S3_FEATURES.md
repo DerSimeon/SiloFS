@@ -1,6 +1,6 @@
-# S3 feature matrix (Milestone 3.1)
+# S3 feature matrix (through Milestone 5)
 
-## Supported in M3.1
+## Supported
 
 | Operation | Notes |
 |-----------|-------|
@@ -26,6 +26,7 @@
 | SigV4 | `AWS4-HMAC-SHA256`, unsigned payload or full payload hash. Constant-time compare. Clock-skew ±15 min (configurable). Strict signed-headers validation (all must be present, `host` mandatory). SigV4-specific percent decoding (no `+`-as-space). No canonical request leakage in errors. |
 | XML errors | `<Error><Code/><Message/><Resource/><RequestId/></Error>` with per-request `x-amz-request-id` (16 hex) and `x-amz-id-2` on every response. |
 | XML parsing | SAX-based parser for CompleteMultipartUpload (XXE-hardened: DOCTYPE disabled, external entities disabled). |
+| Complete XML size limit | `CompleteMultipartUpload` request bodies are bounded by `S3_COMPLETE_XML_MAX_BYTES` before XML parsing. Oversized bodies return `MaxMessageLengthExceeded` (400). |
 | Range reads | Single range, inclusive end, suffix range, open-ended range. Returns 206 with `Content-Range`. `Accept-Ranges: bytes` advertised on GET/HEAD. |
 | User metadata | `x-amz-meta-*` headers echoed back on `GetObject` / `HeadObject` (lowercased name, verbatim value). |
 | Content-Type | Preserved exactly, including parameters (`charset=`, `profile=`, etc.). Defaults to `application/octet-stream`. |
@@ -41,14 +42,17 @@
 | Checksums | `x-amz-checksum-{crc32,crc32c,sha1,sha256}` + `x-amz-checksum-type` persisted on PUT, **verified** against actual blob content, echoed on GET/HEAD, propagated by CopyObject. CRC32C uses a from-scratch Castagnoli implementation (JDK has no built-in). Default `checksumType` is `FULL_OBJECT` when any checksum is supplied. |
 | Blob GC | Content-addressed blobs are GC'd by a tombstone plus quarantine sweep. Live object rows, multipart part rows, and active `blob_write_intents` all count as references; each tombstone is rechecked before moving a blob to quarantine, and quarantined blobs are rechecked again before final deletion. Soft-deleted objects are excluded so their blobs can be reclaimed. |
 | Multipart race safety | `CompleteMultipartUpload` transitions to `COMPLETING` before reading parts, preventing concurrent `UploadPart` mutation. `AbortMultipartUpload` must win `INITIATED -> ABORTED` before deleting parts, so it cannot interfere with active completion. Stuck `COMPLETING` uploads are marked `FAILED_COMPLETION` by recovery based on `completing_at`; they are not reverted to `INITIATED`. |
+| Operational limits | Object uploads, multipart part uploads/copies, object copies, and multipart completions are protected by configurable global semaphores. Saturation returns S3 `SlowDown` (503). |
+| Readiness | `/readyz` probes PostgreSQL, data-directory writeability, and minimum free disk space. |
+| Metrics | `/metricsz` exports request counters, latency histograms, request/response byte counters, active multipart uploads, orphan temp files, quarantined blobs, blob disk bytes, in-flight/rejected limiter counters, DB pool gauges, recovery sweep counters, and blob-store error counters. |
 
-## Not supported in M3.1 (returns `NotImplemented` or `NotSupported`)
+## Not supported (returns `NotImplemented` or `NotSupported`)
 
 | Operation | Target milestone |
 |-----------|------------------|
-| Streaming SigV4 (`aws-chunked`) | M4 |
-| Virtual-host style addressing | M4 |
-| `If-Modified-Since` / `If-Unmodified-Since` on CopyObject | M4 (currently accepted but not enforced) |
+| Streaming SigV4 (`aws-chunked`) | M6 if required by the supported client matrix |
+| Virtual-host style addressing | M6 if required by the supported client matrix |
+| `If-Modified-Since` / `If-Unmodified-Since` on CopyObject | M6 compatibility hardening (currently accepted but not enforced) |
 | Object versioning | out of scope |
 | ACLs / IAM policy engine | out of scope |
 | Lifecycle policies | out of scope |

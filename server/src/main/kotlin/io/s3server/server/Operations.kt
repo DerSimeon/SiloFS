@@ -17,10 +17,24 @@ internal data class MetricsSnapshot(
     val orphanTempFiles: Int,
     val quarantinedBlobs: Int,
     val blobDiskBytes: Long,
+    val inFlightRequests: Int = 0,
+    val inFlightUploads: Int = 0,
+    val inFlightMultipartCompletions: Int = 0,
+    val rejectedRequests: Long = 0,
+    val rejectedUploads: Long = 0,
+    val rejectedMultipartCompletions: Long = 0,
+    val dbPoolActiveConnections: Int? = null,
+    val dbPoolIdleConnections: Int? = null,
+    val dbPoolTotalConnections: Int? = null,
+    val dbPoolThreadsAwaitingConnection: Int? = null,
+    val recoverySweeps: Long = 0,
+    val recoverySweepFailures: Long = 0,
+    val blobStoreErrors: Long = 0,
     val requestMetrics: List<RequestMetricSample> = emptyList(),
 )
 
-internal fun collectReadiness(config: ServerConfig): List<ReadinessCheck> = listOf(checkDatabase(config), checkDataDirectory(config))
+internal fun collectReadiness(config: ServerConfig): List<ReadinessCheck> =
+    listOf(checkDatabase(config), checkDataDirectory(config), checkDiskSpace(config))
 
 private fun checkDatabase(config: ServerConfig): ReadinessCheck =
     runCatching {
@@ -44,6 +58,20 @@ private fun checkDataDirectory(config: ServerConfig): ReadinessCheck =
         ReadinessCheck("data_dir", ok = true, "ok")
     }.getOrElse { t ->
         ReadinessCheck("data_dir", ok = false, t.message ?: t.javaClass.simpleName)
+    }
+
+private fun checkDiskSpace(config: ServerConfig): ReadinessCheck =
+    runCatching {
+        Files.createDirectories(config.dataDir)
+        val usable = Files.getFileStore(config.dataDir).usableSpace
+        val required = config.operationalConfig.minFreeDiskBytes
+        if (usable < required) {
+            ReadinessCheck("disk_space", ok = false, "usable=$usable required=$required")
+        } else {
+            ReadinessCheck("disk_space", ok = true, "usable=$usable required=$required")
+        }
+    }.getOrElse { t ->
+        ReadinessCheck("disk_space", ok = false, t.message ?: t.javaClass.simpleName)
     }
 
 internal fun renderReadiness(checks: List<ReadinessCheck>): String =
@@ -73,11 +101,25 @@ internal fun collectMetrics(config: ServerConfig): MetricsSnapshot {
             ?.listQuarantinedBlobs(olderThanSeconds = 0)
             ?.size
             ?: 0
+    val poolStats = config.database.poolStats()
     return MetricsSnapshot(
         activeMultipartUploads = activeMultipartUploads,
         orphanTempFiles = orphanTempFiles,
         quarantinedBlobs = quarantinedBlobs,
         blobDiskBytes = diskUsageBytes(config.dataDir),
+        inFlightRequests = config.operationalState.inFlightRequests,
+        inFlightUploads = config.operationalState.inFlightUploads,
+        inFlightMultipartCompletions = config.operationalState.inFlightMultipartCompletions,
+        rejectedRequests = config.operationalState.rejectedRequests,
+        rejectedUploads = config.operationalState.rejectedUploads,
+        rejectedMultipartCompletions = config.operationalState.rejectedMultipartCompletions,
+        dbPoolActiveConnections = poolStats?.activeConnections,
+        dbPoolIdleConnections = poolStats?.idleConnections,
+        dbPoolTotalConnections = poolStats?.totalConnections,
+        dbPoolThreadsAwaitingConnection = poolStats?.threadsAwaitingConnection,
+        recoverySweeps = config.operationalState.recoverySweeps,
+        recoverySweepFailures = config.operationalState.recoverySweepFailures,
+        blobStoreErrors = config.operationalState.blobStoreErrors,
         requestMetrics = config.requestMetrics.snapshot(),
     )
 }
@@ -96,8 +138,54 @@ internal fun renderMetrics(snapshot: MetricsSnapshot): String =
         append("# HELP silofs_blob_disk_bytes Bytes used under the configured blob data directory.\n")
         append("# TYPE silofs_blob_disk_bytes gauge\n")
         append("silofs_blob_disk_bytes ").append(snapshot.blobDiskBytes).append('\n')
+        appendOperationalMetrics(snapshot)
         renderRequestMetrics(snapshot.requestMetrics)
     }
+
+private fun StringBuilder.appendOperationalMetrics(snapshot: MetricsSnapshot) {
+    append("# HELP silofs_inflight_requests Requests currently executing inside the server.\n")
+    append("# TYPE silofs_inflight_requests gauge\n")
+    append("silofs_inflight_requests ").append(snapshot.inFlightRequests).append('\n')
+    append("# HELP silofs_inflight_uploads Object or part uploads currently publishing blob data.\n")
+    append("# TYPE silofs_inflight_uploads gauge\n")
+    append("silofs_inflight_uploads ").append(snapshot.inFlightUploads).append('\n')
+    append("# HELP silofs_inflight_multipart_completions Multipart completions currently materialising final objects.\n")
+    append("# TYPE silofs_inflight_multipart_completions gauge\n")
+    append("silofs_inflight_multipart_completions ").append(snapshot.inFlightMultipartCompletions).append('\n')
+    append("# HELP silofs_rejected_requests_total Requests rejected because the server is draining.\n")
+    append("# TYPE silofs_rejected_requests_total counter\n")
+    append("silofs_rejected_requests_total ").append(snapshot.rejectedRequests).append('\n')
+    append("# HELP silofs_rejected_uploads_total Upload requests rejected by the upload concurrency limiter.\n")
+    append("# TYPE silofs_rejected_uploads_total counter\n")
+    append("silofs_rejected_uploads_total ").append(snapshot.rejectedUploads).append('\n')
+    append("# HELP silofs_rejected_multipart_completions_total CompleteMultipartUpload requests rejected by the completion limiter.\n")
+    append("# TYPE silofs_rejected_multipart_completions_total counter\n")
+    append("silofs_rejected_multipart_completions_total ").append(snapshot.rejectedMultipartCompletions).append('\n')
+    append("# HELP silofs_recovery_sweeps_total Recovery sweeps completed by the background/admin recovery runner.\n")
+    append("# TYPE silofs_recovery_sweeps_total counter\n")
+    append("silofs_recovery_sweeps_total ").append(snapshot.recoverySweeps).append('\n')
+    append("# HELP silofs_recovery_sweep_failures_total Recovery sweeps that failed.\n")
+    append("# TYPE silofs_recovery_sweep_failures_total counter\n")
+    append("silofs_recovery_sweep_failures_total ").append(snapshot.recoverySweepFailures).append('\n')
+    append("# HELP silofs_blob_store_errors_total Blob-store publish/read/delete failures observed by request handlers.\n")
+    append("# TYPE silofs_blob_store_errors_total counter\n")
+    append("silofs_blob_store_errors_total ").append(snapshot.blobStoreErrors).append('\n')
+    appendDbGauge("silofs_db_pool_active_connections", "Active Hikari database connections.", snapshot.dbPoolActiveConnections)
+    appendDbGauge("silofs_db_pool_idle_connections", "Idle Hikari database connections.", snapshot.dbPoolIdleConnections)
+    appendDbGauge("silofs_db_pool_total_connections", "Total Hikari database connections.", snapshot.dbPoolTotalConnections)
+    appendDbGauge(
+        "silofs_db_pool_threads_awaiting_connection",
+        "Threads currently waiting for a Hikari database connection.",
+        snapshot.dbPoolThreadsAwaitingConnection,
+    )
+}
+
+private fun StringBuilder.appendDbGauge(name: String, help: String, value: Int?) {
+    if (value == null) return
+    append("# HELP ").append(name).append(' ').append(help).append('\n')
+    append("# TYPE ").append(name).append(" gauge\n")
+    append(name).append(' ').append(value).append('\n')
+}
 
 internal fun renderBlobConsistencyReport(report: BlobConsistencyReport): String =
     buildString {

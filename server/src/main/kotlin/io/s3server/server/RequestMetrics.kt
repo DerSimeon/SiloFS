@@ -7,15 +7,21 @@ import io.ktor.server.application.createApplicationPlugin
 import io.ktor.server.application.hooks.ResponseSent
 import io.ktor.server.request.httpMethod
 import io.ktor.server.request.path
+import app.silofs.common.S3ErrorCode
+import app.silofs.common.S3Exception
+import org.slf4j.LoggerFactory
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.LongAdder
 
 internal val REQUEST_LATENCY_BUCKET_SECONDS = doubleArrayOf(0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0)
 
 private val callStartNanosKey = io.ktor.util.AttributeKey<Long>("SilosRequestMetricsStartNanos")
+private val callTrackedKey = io.ktor.util.AttributeKey<Boolean>("SilosOperationalRequestTracked")
+private val accessLog = LoggerFactory.getLogger("AccessLog")
 
 class RequestMetricsConfig {
     lateinit var registry: RequestMetricsRegistry
+    lateinit var operationalState: OperationalState
 }
 
 val RequestMetricsPlugin: ApplicationPlugin<RequestMetricsConfig> = createApplicationPlugin(
@@ -23,27 +29,52 @@ val RequestMetricsPlugin: ApplicationPlugin<RequestMetricsConfig> = createApplic
     createConfiguration = { RequestMetricsConfig() },
 ) {
     val registry = pluginConfig.registry
+    val operationalState = pluginConfig.operationalState
 
     application.intercept(ApplicationCallPipeline.Setup) {
+        if (!operationalState.beginRequest()) {
+            throw S3Exception(S3ErrorCode.ServiceUnavailable, "Server is shutting down")
+        }
+        context.attributes.put(callTrackedKey, true)
         context.attributes.put(callStartNanosKey, System.nanoTime())
     }
 
     on(ResponseSent) { call ->
-        val startNanos = call.attributes.getOrNull(callStartNanosKey) ?: return@on
-        val operation = classifyS3Operation(
-            method = call.request.httpMethod.value,
-            path = call.request.path(),
-            queryNames = call.request.queryParameters.names(),
-            hasCopySource = call.request.headers["x-amz-copy-source"] != null,
-        ) ?: return@on
-        val status = call.response.status()?.value ?: 0
-        registry.observe(
-            operation = operation,
-            status = status,
-            requestBytes = call.request.headers[HttpHeaders.ContentLength].toNonNegativeLongOrZero(),
-            responseBytes = call.response.headers[HttpHeaders.ContentLength].toNonNegativeLongOrZero(),
-            latencyNanos = (System.nanoTime() - startNanos).coerceAtLeast(0L),
-        )
+        try {
+            val startNanos = call.attributes.getOrNull(callStartNanosKey) ?: return@on
+            val operation = classifyS3Operation(
+                method = call.request.httpMethod.value,
+                path = call.request.path(),
+                queryNames = call.request.queryParameters.names(),
+                hasCopySource = call.request.headers["x-amz-copy-source"] != null,
+            )
+            val status = call.response.status()?.value ?: 0
+            val requestBytes = call.request.headers[HttpHeaders.ContentLength].toNonNegativeLongOrZero()
+            val responseBytes = call.response.headers[HttpHeaders.ContentLength].toNonNegativeLongOrZero()
+            val latencyNanos = (System.nanoTime() - startNanos).coerceAtLeast(0L)
+            if (operation != null) {
+                registry.observe(
+                    operation = operation,
+                    status = status,
+                    requestBytes = requestBytes,
+                    responseBytes = responseBytes,
+                    latencyNanos = latencyNanos,
+                )
+                accessLog.info(
+                    "request completed request_id={} operation={} status={} latency_ms={} request_bytes={} response_bytes={}",
+                    call.requestId() ?: "-",
+                    operation,
+                    status,
+                    latencyNanos / 1_000_000,
+                    requestBytes,
+                    responseBytes,
+                )
+            }
+        } finally {
+            if (call.attributes.getOrNull(callTrackedKey) == true) {
+                operationalState.finishRequest()
+            }
+        }
     }
 }
 

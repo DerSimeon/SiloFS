@@ -37,11 +37,20 @@ fun Application.installPlugins(config: ServerConfig) {
     install(RequestIdPlugin)
     install(RequestMetricsPlugin) {
         registry = config.requestMetrics
+        operationalState = config.operationalState
     }
     install(CallLogging) {
         level = Level.INFO
         filter { call -> call.request.path() !in setOf("/healthz", "/readyz", "/metricsz") }
         mdc("s3-request-id") { call -> call.requestId() ?: "-" }
+        mdc("s3-operation") { call ->
+            classifyS3Operation(
+                method = call.request.httpMethod.value,
+                path = call.request.path(),
+                queryNames = call.request.queryParameters.names(),
+                hasCopySource = call.request.headers["x-amz-copy-source"] != null,
+            ) ?: "-"
+        }
     }
     install(ContentNegotiation) {
         json()

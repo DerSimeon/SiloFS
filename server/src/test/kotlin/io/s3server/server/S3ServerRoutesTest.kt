@@ -5,9 +5,24 @@ import app.silofs.blob.BlobReference
 import app.silofs.blob.MissingBlob
 import app.silofs.blob.OrphanBlob
 import app.silofs.common.ETagMatcher
+import app.silofs.common.S3Exception
 import app.silofs.common.S3Errors
 import app.silofs.common.s3Tag
 import app.silofs.common.s3XmlDocument
+import io.ktor.client.request.header
+import io.ktor.client.request.post
+import io.ktor.client.request.setBody
+import io.ktor.http.ContentType
+import io.ktor.http.HttpHeaders
+import io.ktor.http.HttpStatusCode
+import io.ktor.server.application.call
+import io.ktor.server.response.respondText
+import io.ktor.server.routing.post
+import io.ktor.server.routing.routing
+import io.ktor.server.testing.testApplication
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
+import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -143,6 +158,19 @@ class S3ServerRoutesTest {
                     orphanTempFiles = 3,
                     quarantinedBlobs = 4,
                     blobDiskBytes = 5,
+                    inFlightRequests = 6,
+                    inFlightUploads = 7,
+                    inFlightMultipartCompletions = 8,
+                    rejectedRequests = 9,
+                    rejectedUploads = 10,
+                    rejectedMultipartCompletions = 11,
+                    dbPoolActiveConnections = 12,
+                    dbPoolIdleConnections = 13,
+                    dbPoolTotalConnections = 14,
+                    dbPoolThreadsAwaitingConnection = 15,
+                    recoverySweeps = 16,
+                    recoverySweepFailures = 17,
+                    blobStoreErrors = 18,
                 ),
             )
 
@@ -151,6 +179,114 @@ class S3ServerRoutesTest {
         assertTrue(body.contains("silofs_orphan_temp_files 3\n"))
         assertTrue(body.contains("silofs_quarantined_blobs 4\n"))
         assertTrue(body.contains("silofs_blob_disk_bytes 5\n"))
+        assertTrue(body.contains("silofs_inflight_requests 6\n"))
+        assertTrue(body.contains("silofs_inflight_uploads 7\n"))
+        assertTrue(body.contains("silofs_inflight_multipart_completions 8\n"))
+        assertTrue(body.contains("silofs_rejected_requests_total 9\n"))
+        assertTrue(body.contains("silofs_rejected_uploads_total 10\n"))
+        assertTrue(body.contains("silofs_rejected_multipart_completions_total 11\n"))
+        assertTrue(body.contains("silofs_db_pool_active_connections 12\n"))
+        assertTrue(body.contains("silofs_db_pool_idle_connections 13\n"))
+        assertTrue(body.contains("silofs_db_pool_total_connections 14\n"))
+        assertTrue(body.contains("silofs_db_pool_threads_awaiting_connection 15\n"))
+        assertTrue(body.contains("silofs_recovery_sweeps_total 16\n"))
+        assertTrue(body.contains("silofs_recovery_sweep_failures_total 17\n"))
+        assertTrue(body.contains("silofs_blob_store_errors_total 18\n"))
+    }
+
+    @Test
+    fun `operational upload limiter rejects saturated uploads and records counters`() = runBlocking {
+        val state = OperationalState(testOperationalConfig(maxConcurrentUploads = 1))
+        val entered = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val first =
+            async {
+                state.withUploadPermit {
+                    entered.complete(Unit)
+                    release.await()
+                }
+            }
+        entered.await()
+
+        val ex =
+            try {
+                state.withUploadPermit { }
+                null
+            } catch (e: S3Exception) {
+                e
+            }
+
+        assertEquals("SlowDown", ex?.errorCode?.code)
+        assertEquals(1, state.inFlightUploads)
+        assertEquals(1, state.rejectedUploads)
+        release.complete(Unit)
+        first.await()
+        assertEquals(0, state.inFlightUploads)
+    }
+
+    @Test
+    fun `operational completion limiter rejects saturated completions and records counters`() = runBlocking {
+        val state = OperationalState(testOperationalConfig(maxConcurrentMultipartCompletions = 1))
+        val entered = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val first =
+            async {
+                state.withMultipartCompletionPermit {
+                    entered.complete(Unit)
+                    release.await()
+                }
+            }
+        entered.await()
+
+        val ex =
+            try {
+                state.withMultipartCompletionPermit { }
+                null
+            } catch (e: S3Exception) {
+                e
+            }
+
+        assertEquals("SlowDown", ex?.errorCode?.code)
+        assertEquals(1, state.inFlightMultipartCompletions)
+        assertEquals(1, state.rejectedMultipartCompletions)
+        release.complete(Unit)
+        first.await()
+        assertEquals(0, state.inFlightMultipartCompletions)
+    }
+
+    @Test
+    fun `operational request tracking rejects new requests after shutdown begins`() {
+        val state = OperationalState(testOperationalConfig())
+        assertTrue(state.beginRequest())
+        assertEquals(1, state.inFlightRequests)
+        state.beginShutdown()
+        assertFalse(state.beginRequest())
+        assertEquals(1, state.rejectedRequests)
+        state.finishRequest()
+        assertTrue(state.awaitRequestDrain(timeoutMillis = 100))
+    }
+
+    @Test
+    fun `bounded complete xml reader rejects declared oversized body`() = testApplication {
+        application {
+            routing {
+                post("/bounded") {
+                    try {
+                        call.respondText(call.receiveBoundedText(maxBytes = 4))
+                    } catch (e: S3Exception) {
+                        call.respondText(e.errorCode.code, ContentType.Text.Plain, HttpStatusCode.fromValue(e.errorCode.httpStatus))
+                    }
+                }
+            }
+        }
+
+        val response =
+            client.post("/bounded") {
+                header(HttpHeaders.ContentLength, "5")
+                setBody("abcde")
+            }
+
+        assertEquals(HttpStatusCode.BadRequest, response.status)
     }
 
     @Test
@@ -292,3 +428,16 @@ class ServerConfigTest {
         org.junit.jupiter.api.Assertions
             .assertTrue(b)
 }
+
+private fun testOperationalConfig(
+    maxConcurrentUploads: Int = 64,
+    maxConcurrentMultipartCompletions: Int = 8,
+): OperationalConfig =
+    OperationalConfig(
+        maxConcurrentUploads = maxConcurrentUploads,
+        maxConcurrentMultipartCompletions = maxConcurrentMultipartCompletions,
+        completeXmlMaxBytes = 1_048_576L,
+        minFreeDiskBytes = 0L,
+        shutdownQuietPeriodMs = 1_000L,
+        shutdownTimeoutMs = 5_000L,
+    )
