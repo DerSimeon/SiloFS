@@ -1,5 +1,6 @@
 package app.silofs.server
 
+import app.silofs.blob.BlobConsistencyReport
 import app.silofs.blob.FsBlobStore
 import java.nio.file.Files
 import java.nio.file.Path
@@ -96,6 +97,32 @@ internal fun renderMetrics(snapshot: MetricsSnapshot): String =
         append("# TYPE silofs_blob_disk_bytes gauge\n")
         append("silofs_blob_disk_bytes ").append(snapshot.blobDiskBytes).append('\n')
         renderRequestMetrics(snapshot.requestMetrics)
+    }
+
+internal fun renderBlobConsistencyReport(report: BlobConsistencyReport): String =
+    buildString {
+        append("consistent=").append(report.isConsistent).append('\n')
+        append("referenced_blobs=").append(report.referencedBlobCount).append('\n')
+        append("content_blobs=").append(report.contentBlobCount).append('\n')
+        append("quarantined_blobs=").append(report.quarantinedBlobCount).append('\n')
+        append("missing_blobs=").append(report.missingBlobs.size).append('\n')
+        for (missing in report.missingBlobs) {
+            append("missing ")
+            append("kind=").append(missing.reference.kind)
+            missing.reference.bucket?.let { append(" bucket=").append(it) }
+            missing.reference.key?.let { append(" key=").append(it) }
+            missing.reference.uploadId?.let { append(" uploadId=").append(it) }
+            missing.reference.partNumber?.let { append(" partNumber=").append(it) }
+            append(" sha256=").append(missing.reference.sha256Hex)
+            append(" expectedPath=").append(missing.expectedPath)
+            append('\n')
+        }
+        append("orphan_blobs=").append(report.orphanBlobs.size).append('\n')
+        for (orphan in report.orphanBlobs) {
+            append("orphan sha256=").append(orphan.sha256Hex)
+            append(" path=").append(orphan.path)
+            append('\n')
+        }
     }
 
 private fun StringBuilder.renderRequestMetrics(samples: List<RequestMetricSample>) {

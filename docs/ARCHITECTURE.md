@@ -148,8 +148,14 @@ A coroutine scheduled by `CoroutineScope(Dispatchers.IO)` runs every 60 seconds
    references one more time; newly referenced quarantined blobs are restored to
    their content-addressed path instead of deleted.
 
-These jobs are designed so that crashing mid-sweep is safe — every step is
-idempotent.
+The server runs one recovery pass during startup before it begins accepting
+requests, then starts the periodic coroutine. These jobs are designed so that
+crashing mid-sweep is safe — every step is idempotent.
+
+For operator inspection, `s3server admin check-blobs` runs a read-only
+consistency check that reports live DB references whose content-addressed blob
+is missing, content blobs with no live DB reference, and quarantined blobs.
+`s3server admin recover-once` runs the same recovery sweep once and exits.
 
 ## 7. Authentication
 

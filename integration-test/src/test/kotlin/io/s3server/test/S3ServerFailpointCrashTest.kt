@@ -18,6 +18,7 @@ import software.amazon.awssdk.core.sync.RequestBody
 import software.amazon.awssdk.regions.Region
 import software.amazon.awssdk.services.s3.S3Client
 import software.amazon.awssdk.services.s3.model.PutObjectRequest
+import java.net.ServerSocket
 import java.net.URI
 import java.nio.file.Files
 import java.nio.file.Path
@@ -65,7 +66,7 @@ class S3ServerFailpointCrashTest {
     )
 
     private fun startServer(pg: PostgreSQLContainer<*>, dataDir: Path, failpoint: String? = null): RunningServer {
-        val port = 19090 + (UUID.randomUUID().hashCode() and 0xFF)
+        val port = freePort()
         val endpoint = "http://127.0.0.1:$port"
 
         val javaHome = System.getProperty("java.home")
@@ -121,6 +122,12 @@ class S3ServerFailpointCrashTest {
 
         return RunningServer(process, endpoint, port, dataDir)
     }
+
+    private fun freePort(): Int =
+        ServerSocket(0).use { socket ->
+            socket.reuseAddress = true
+            socket.localPort
+        }
 
     private fun stopServer(server: RunningServer) {
         server.process.destroyForcibly()

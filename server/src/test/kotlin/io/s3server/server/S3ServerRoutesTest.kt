@@ -1,5 +1,9 @@
 package app.silofs.server
 
+import app.silofs.blob.BlobConsistencyReport
+import app.silofs.blob.BlobReference
+import app.silofs.blob.MissingBlob
+import app.silofs.blob.OrphanBlob
 import app.silofs.common.ETagMatcher
 import app.silofs.common.S3Errors
 import app.silofs.common.s3Tag
@@ -8,6 +12,7 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import java.nio.file.Path
 
 /**
  * Unit-style tests for the M2 server module that don't require a running
@@ -146,6 +151,46 @@ class S3ServerRoutesTest {
         assertTrue(body.contains("silofs_orphan_temp_files 3\n"))
         assertTrue(body.contains("silofs_quarantined_blobs 4\n"))
         assertTrue(body.contains("silofs_blob_disk_bytes 5\n"))
+    }
+
+    @Test
+    fun `blob consistency report rendering is script friendly`() {
+        val body =
+            renderBlobConsistencyReport(
+                BlobConsistencyReport(
+                    referencedBlobCount = 2,
+                    contentBlobCount = 3,
+                    quarantinedBlobCount = 1,
+                    missingBlobs =
+                        listOf(
+                            MissingBlob(
+                                reference =
+                                    BlobReference(
+                                        kind = "object",
+                                        bucket = "b",
+                                        key = "k",
+                                        blobPath = "objects/aa/aa",
+                                        sha256Hex = "aa".repeat(32),
+                                    ),
+                                expectedPath = Path.of("objects/aa/aa"),
+                            ),
+                        ),
+                    orphanBlobs =
+                        listOf(
+                            OrphanBlob(
+                                sha256Hex = "bb".repeat(32),
+                                path = Path.of("objects/bb/bb"),
+                            ),
+                        ),
+                ),
+            )
+
+        assertTrue(body.startsWith("consistent=false\n"))
+        assertTrue(body.contains("referenced_blobs=2\n"))
+        assertTrue(body.contains("missing_blobs=1\n"))
+        assertTrue(body.contains("missing kind=object bucket=b key=k sha256=${"aa".repeat(32)}"))
+        assertTrue(body.contains("orphan_blobs=1\n"))
+        assertTrue(body.contains("orphan sha256=${"bb".repeat(32)}"))
     }
 
     @Test

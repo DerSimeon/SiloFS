@@ -176,8 +176,8 @@ The same contract applies to `UploadPart` and `CompleteMultipartUpload`.
 
 ## Known limitations (post-M3.1)
 
-* No streaming SigV4 (`aws-chunked` payloads) — M4
-* No virtual-host style addressing — M4
+* No streaming SigV4 (`aws-chunked` payloads) — compatibility milestone
+* No virtual-host style addressing — compatibility milestone
 * No server-side encryption (SSE-S3/SSE-C) — M7
 * No object versioning, ACLs, IAM, lifecycle, replication, or erasure coding — out of scope
 
@@ -205,10 +205,13 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Key points:
 * **Streaming**: `respondOutputStream` for downloads, `receiveStream` for
   uploads.
 * **Idempotent recovery**: every sweep step is safe to crash mid-execution.
+* **Admin inspection**: `s3server admin check-blobs` reports missing referenced
+  blobs and orphan content blobs without mutating data; `s3server admin
+  recover-once` runs one recovery sweep and exits.
 
 ## Next steps
 
 1. Run `./gradlew :integration-test:test` to confirm the SDK smoke suite is
    green.
-2. Move on to M4 (virtual-host addressing, streaming SigV4, metrics, graceful
-   shutdown) following [docs/MILESTONES.md](docs/MILESTONES.md).
+2. Continue M4 durability work: expand crash/race coverage, run repeated
+   recovery tests, and keep docs aligned with [docs/MILESTONES.md](docs/MILESTONES.md).
