@@ -206,6 +206,13 @@ with AES-GCM when `S3_ACCESS_KEY_SECRET_ENCRYPTION_KEY` is configured; strict
 deployments can set `S3_REQUIRE_ENCRYPTED_SECRETS=true` to reject plaintext
 secret rows.
 
+After authentication, bucket authorization checks `access_key_bucket_grants`.
+`READ` permits object reads and listing, `WRITE` permits object and multipart
+mutation, and `ADMIN` permits bucket and governance administration. Copy
+operations require source `READ` and destination `WRITE`. The wildcard bucket
+`*` is supported for operator/admin keys. Full IAM JSON, bucket policies, and
+S3 ACL APIs are intentionally not part of this model.
+
 Per-access-key rate limiting is optional. When configured, requests over the
 token bucket return S3 `SlowDown` and increment a metrics counter.
 
@@ -235,6 +242,10 @@ token bucket return S3 `SlowDown` and increment a metrics counter.
 * Graceful shutdown flips the server into drain mode, stops accepting new work,
   waits for Ktor's configured quiet period and timeout, waits for in-flight
   accounting to reach zero, stops the recovery job, and closes the DB pool.
+* Bucket versioning, lifecycle, and Object Lock state live in Postgres. Versioned
+  deletes create metadata delete markers; lifecycle expiry marks eligible
+  versions deleted first and leaves blob reclamation to the normal recovery/GC
+  path. Retention and legal hold block both direct deletion and lifecycle expiry.
 * CORS is disabled by default. Operators must configure
   `S3_CORS_ALLOWED_ORIGINS` to expose browser access.
 * Mutating S3 operations are written to `audit_events` with request id,

@@ -3,7 +3,15 @@
 Build a static Linux binary:
 
 ```bash
-CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o silofs .
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w -X main.version=0.15.0" -o silofs .
+```
+
+Or install a published Debian package:
+
+```bash
+curl -1sLf "https://dl.cloudsmith.io/public/<owner>/<repo>/setup.deb.sh" | sudo -E bash
+sudo apt update
+sudo apt install silofs
 ```
 
 The root command accepts flags first, then `SILOS_*` environment variables, then compatible `S3_*` environment variables.
@@ -18,6 +26,7 @@ silofs cat s3://photos/image.jpg > image.jpg
 silofs presign get s3://photos/image.jpg --expires 15m
 silofs admin inspect buckets --db-url jdbc:postgresql://localhost:5432/silofs
 silofs admin check-blobs --data-dir /var/lib/silofs/data
+silofs admin grant add --access-key-id AKIA... --bucket photos --permission READ
 ```
 
 `admin repair` and `admin gc` intentionally require `--dry-run`; M10 does not perform mutating repair or GC from the CLI.

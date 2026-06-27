@@ -8,14 +8,23 @@ a server `bin` directory.
 
 ```bash
 cd cli
-CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o silofs .
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w -X main.version=0.15.0" -o silofs .
 ```
 
 Docker build smoke:
 
 ```bash
 docker run --rm -v "$PWD/cli:/src" -w /src golang:1.23.5-bookworm \
-  sh -c 'CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o /tmp/silofs . && /tmp/silofs version'
+  sh -c 'CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w -X main.version=0.15.0" -o /tmp/silofs . && /tmp/silofs version'
+```
+
+Release packages publish the CLI as a Debian package named `silofs`:
+
+```bash
+curl -1sLf "https://dl.cloudsmith.io/public/<owner>/<repo>/setup.deb.sh" | sudo -E bash
+sudo apt update
+sudo apt install silofs
+silofs version
 ```
 
 ## Configuration precedence
@@ -73,9 +82,17 @@ declared compatibility envelope.
 - `silofs admin access-key rotate ID`
 - `silofs admin access-key delete ID`
 - `silofs admin access-key reencrypt`
+- `silofs admin grant add --access-key-id ID --bucket BUCKET --permission READ|WRITE|ADMIN`
+- `silofs admin grant list [--access-key-id ID] [--bucket BUCKET]`
+- `silofs admin grant remove --access-key-id ID --bucket BUCKET --permission READ|WRITE|ADMIN`
 
 Admin commands connect directly to PostgreSQL and the configured blob directory.
 No HTTP admin API is added in M10.
+
+Grant commands manage the M13 bucket-scoped authorization model. Permissions are
+`READ`, `WRITE`, and `ADMIN`; the wildcard bucket `*` grants that permission
+across all buckets. Full IAM JSON, S3 ACL APIs, and bucket policies remain
+unsupported.
 
 ## Safety notes
 

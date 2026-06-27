@@ -1,4 +1,4 @@
-# S3 feature matrix (through Milestone 10)
+# S3 feature matrix (through Milestone 15)
 
 ## Supported
 
@@ -14,6 +14,11 @@
 | `HeadObject` | Returns the same headers as `GetObject` with no body. Honours `If-Match` / `If-None-Match`. Echoes checksums. |
 | `DeleteObject` | Idempotent. Always returns 204 with `Content-Length: 0`. Soft-deletes the object row so the blob can be GC'd. |
 | `DeleteObjects` | `POST /{bucket}?delete` batch-deletes object keys using the same soft-delete semantics as `DeleteObject`. Missing keys are reported as deleted for S3 compatibility; invalid keys appear in per-key `<Error>` entries. |
+| Bucket versioning | `GET/PUT /{bucket}?versioning` supports `Enabled` and `Suspended`. Enabled buckets create opaque version IDs for `PutObject`, `CopyObject`, and completed multipart uploads. |
+| List object versions | `GET /{bucket}?versions` returns object versions and delete markers for the practical S3 subset. |
+| Versioned reads/deletes | `GET`, `HEAD`, and `DELETE` accept `versionId`. Delete without `versionId` creates a delete marker when bucket versioning is enabled. |
+| Lifecycle configuration | `GET/PUT/DELETE /{bucket}?lifecycle` stores practical expiration rules. The lifecycle worker is opt-in via `S3_LIFECYCLE_ENABLED=true` and performs metadata-first expiry; blob GC happens later. |
+| Object Lock subset | `GET/PUT /{bucket}?object-lock`, `GET/PUT ?retention`, and `GET/PUT ?legal-hold` support bucket-level enablement, default retention, per-object retention, and legal hold. Governance and Compliance are both enforced strictly. |
 | `CopyObject` | Server-side copy via `x-amz-copy-source` header. Supports `x-amz-metadata-directive` (`COPY` default, `REPLACE`). Cross-bucket and in-place copy. Conditional copy via `x-amz-copy-source-if-match` / `x-amz-copy-source-if-none-match`. Returns `CopyObjectResult` XML with new ETag + LastModified. Source checksums are propagated. |
 | `CreateMultipartUpload` | `POST /{bucket}/{key}?uploads`. Returns `UploadId`. Persists content-type, user metadata, storage class, and content headers for completion time. |
 | `UploadPart` | `PUT /{bucket}/{key}?partNumber=N&uploadId=X`. Streams to temp file, fsyncs, renames to content-addressed blob. Re-upload overwrites (UPSERT). Validates part number (1–10000) and part size (≤5 GiB). Verifies `Content-Length` against actual byte count. Persists and verifies per-part checksums. Returns ETag header. |
@@ -49,6 +54,7 @@
 | Metrics | `/metricsz` exports request counters, latency histograms, request/response byte counters, active multipart uploads, orphan temp files, quarantined blobs, blob disk bytes, in-flight/rejected limiter counters, DB pool gauges, recovery sweep counters, and blob-store error counters. |
 | Compatibility matrix | Docker-backed tests pass for the Core 5 path-style matrix plus the M10 extended clients: AWS SDK Kotlin, MinIO `mc`, `rclone`, and `s5cmd`. See `docs/COMPATIBILITY_M6.md`. |
 | Access keys | Metadata-backed access keys with ACTIVE/DISABLED/DELETED lifecycle. DB-backed auth lookup means create/disable/rotate/delete take effect without server restart. |
+| Bucket-scoped grants | Access keys can be granted `READ`, `WRITE`, or `ADMIN` on a bucket or wildcard `*`. Full IAM JSON, S3 ACL APIs, and bucket policies remain unsupported. |
 | Secret storage | Access-key secrets can be stored encrypted with AES-GCM using `S3_ACCESS_KEY_SECRET_ENCRYPTION_KEY`; plaintext dev bootstrap remains available unless `S3_REQUIRE_ENCRYPTED_SECRETS=true`. |
 | Object encryption | Optional SSE-S3-style encryption at rest with AES-GCM when `S3_OBJECT_ENCRYPTION_MODE=sse-s3` and `S3_OBJECT_ENCRYPTION_MASTER_KEY` are configured. New object, copy, multipart-part, and completed multipart blobs are stored encrypted while S3 ETag, checksum, size, range, copy, recovery, GC, backup, and restore semantics remain plaintext-compatible. `GetObject`/`HeadObject` echo `x-amz-server-side-encryption: AES256` for encrypted metadata rows. Existing plaintext blobs remain readable. |
 | Rate limiting | Optional per-access-key rate limiting returns S3 `SlowDown` (503) and exports a rejection counter. |
@@ -56,6 +62,7 @@
 | CORS | Disabled by default. `S3_CORS_ALLOWED_ORIGINS` enables explicit origins; `*` is accepted only when explicitly configured. |
 | Admin inspection | `silofs admin inspect ...`, `check-blobs`, `storage usage`, `repair --dry-run`, and `gc --dry-run` provide read-only operator visibility. |
 | Backup/restore | Offline/quiesced backup and restore scripts cover PostgreSQL metadata dumps, content-addressed blob copies, manifests, and post-restore consistency verification. |
+| Release automation | Tag pushes `v*.*.*` build CLI Linux binaries, `.deb` packages, GitHub Release assets, a GHCR server image, and Cloudsmith apt packages when Cloudsmith secrets are configured. |
 
 ## Not supported
 
@@ -63,14 +70,13 @@
 |-----------|--------|
 | Virtual-host style addressing | Unsupported. M6 Core 5 support requires explicit path-style endpoint configuration; detection tests record virtual-host behavior separately. |
 | `If-Modified-Since` / `If-Unmodified-Since` on CopyObject | M6 compatibility hardening (currently accepted but not enforced) |
-| Object versioning | out of scope |
-| ACLs / IAM policy engine | out of scope |
-| Lifecycle policies | out of scope |
+| Full IAM policy engine / S3 ACL APIs / bucket policies | Unsupported. M13 implements bucket-scoped access-key grants only. |
+| Lifecycle transitions to alternate storage classes | Unsupported. Lifecycle only expires metadata versions in the practical subset. |
 | Replication / clustering | out of scope |
 | Erasure coding | out of scope |
 | SSE-KMS / external KMS | Unsupported. Local single-node SSE-S3 is the only M8.5 encryption mode. |
 | SSE-C | Unsupported. Requests with SSE-C headers return `NotImplemented`. |
-| Object Lock | out of scope |
+| Object Lock governance bypass | Unsupported. Governance and Compliance both block deletes strictly in this first implementation. |
 | Storage classes other than `STANDARD` (accepted but treated as STANDARD) | out of scope |
 
 ## Durability contract

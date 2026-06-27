@@ -22,6 +22,8 @@
 * Crash-safe writes, recovery sweeps, and blob consistency checks.
 * Multipart uploads, copy, range reads, presigned URLs, and batch deletes.
 * Optional SSE-S3 style object encryption.
+* Bucket-scoped access grants for individual access keys.
+* Optional per-bucket versioning, lifecycle expiry, and Object Lock controls.
 * Docker-backed compatibility tests for AWS SDKs, AWS CLI, boto3, MinIO `mc`,
   `rclone`, and `s5cmd`.
 * Standalone `silofs` CLI for object operations and local admin inspection.
@@ -51,6 +53,15 @@ go build -o silofs .
 ./silofs --endpoint http://localhost:8080 mb s3://photos
 ./silofs cp ./image.jpg s3://photos/image.jpg
 ./silofs ls s3://photos/
+```
+
+Install the CLI from the apt repository once a release has been published:
+
+```bash
+curl -1sLf "https://dl.cloudsmith.io/public/<owner>/<repo>/setup.deb.sh" | sudo -E bash
+sudo apt update
+sudo apt install silofs
+silofs version
 ```
 
 Default local-development credentials:

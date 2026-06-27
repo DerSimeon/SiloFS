@@ -712,3 +712,77 @@ Exit criteria:
 - security review accepts the final `aws-chunked` policy
 - CLI `admin check-blobs` verifies encrypted blobs with correct/missing/wrong key behavior
 - full locked release verification passes from a clean checkout
+
+## Milestone 13 — bucket-scoped access grants
+
+Status: implemented; pending full CI-backed release evidence.
+
+M13 adds a practical authorization layer after SigV4 authentication. Access
+keys can be granted `READ`, `WRITE`, or `ADMIN` on individual buckets or the
+wildcard bucket `*`.
+
+Deliverables:
+
+- `access_key_bucket_grants` metadata table
+- request authorization before bucket/object/multipart work
+- source `READ` plus destination `WRITE` checks for copy operations
+- JVM admin and standalone CLI grant add/list/remove commands
+- integration coverage for read-only access keys
+
+Known non-goals:
+
+- full IAM JSON policies
+- S3 ACL APIs
+- bucket policy APIs
+
+## Milestone 14 — bucket governance
+
+Status: implemented for the practical single-node subset; pending full
+compatibility and CI evidence.
+
+M14 adds per-bucket versioning, lifecycle expiry, and Object Lock controls.
+The implementation prioritizes correctness over the full AWS governance API
+surface.
+
+Deliverables:
+
+- bucket versioning state
+- opaque object version IDs for PUT, CopyObject, and completed multipart upload
+- delete markers for versioned DELETE without `versionId`
+- version-aware GET, HEAD, DELETE, and ListObjectVersions
+- lifecycle rule storage and opt-in metadata-first lifecycle worker
+- bucket Object Lock enablement, default retention, object retention, and legal hold
+- retention/legal-hold enforcement for deletes and lifecycle expiry
+
+Known non-goals:
+
+- lifecycle transitions to alternate storage classes
+- governance bypass permissions
+- complete AWS Object Lock parity
+
+## Milestone 15 — release automation
+
+Status: implemented; first tagged release will validate external publishing.
+
+M15 adds release automation for GitHub Releases, GHCR server images, static CLI
+binaries, Debian packages, and Cloudsmith apt publishing.
+
+Deliverables:
+
+- tag-triggered release workflow for `v*.*.*`
+- CLI Linux binaries for `amd64` and `arm64`
+- Debian package `silofs` installing `/usr/bin/silofs`
+- SHA-256 checksums
+- GitHub Release artifacts
+- GHCR server image
+- Cloudsmith Debian package publishing when `CLOUDSMITH_API_KEY`,
+  `CLOUDSMITH_OWNER`, and `CLOUDSMITH_REPO` secrets are configured
+
+Install shape:
+
+```bash
+curl -1sLf "https://dl.cloudsmith.io/public/<owner>/<repo>/setup.deb.sh" | sudo -E bash
+sudo apt update
+sudo apt install silofs
+silofs version
+```
