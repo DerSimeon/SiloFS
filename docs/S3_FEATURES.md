@@ -24,6 +24,7 @@
 | `ListObjectsV2` | Full pagination with `max-keys`, `continuation-token`, `start-after`. Supports `prefix`, `delimiter` (with `CommonPrefixes` grouping), and `encoding-type=url` (URL-encodes keys and prefixes in the response). `KeyCount` counts both `Contents` and `CommonPrefixes`. `max-keys < 0` returns `InvalidArgument`. |
 | Presigned GET/PUT | SigV4 over query string. Expiry enforcement (0–604800 seconds). Clock-skew validation. Tampered signatures → `SignatureDoesNotMatch` (403). |
 | SigV4 | `AWS4-HMAC-SHA256`, unsigned payload or full payload hash. Constant-time compare. Clock-skew ±15 min (configurable). Strict signed-headers validation (all must be present, `host` mandatory). SigV4-specific percent decoding (no `+`-as-space). No canonical request leakage in errors. |
+| Streaming SigV4 / `aws-chunked` | Object and part uploads decode `STREAMING-AWS4-HMAC-SHA256-PAYLOAD` and `STREAMING-UNSIGNED-PAYLOAD-TRAILER` request bodies used by clients such as MinIO `mc`. Per-chunk SigV4 signatures are not verified yet. |
 | XML errors | `<Error><Code/><Message/><Resource/><RequestId/></Error>` with per-request `x-amz-request-id` (16 hex) and `x-amz-id-2` on every response. |
 | XML parsing | SAX-based parser for CompleteMultipartUpload (XXE-hardened: DOCTYPE disabled, external entities disabled). |
 | Complete XML size limit | `CompleteMultipartUpload` request bodies are bounded by `S3_COMPLETE_XML_MAX_BYTES` before XML parsing. Oversized bodies return `MaxMessageLengthExceeded` (400). |
@@ -45,7 +46,7 @@
 | Operational limits | Object uploads, multipart part uploads/copies, object copies, and multipart completions are protected by configurable global semaphores. Saturation returns S3 `SlowDown` (503). |
 | Readiness | `/readyz` probes PostgreSQL, data-directory writeability, and minimum free disk space. |
 | Metrics | `/metricsz` exports request counters, latency histograms, request/response byte counters, active multipart uploads, orphan temp files, quarantined blobs, blob disk bytes, in-flight/rejected limiter counters, DB pool gauges, recovery sweep counters, and blob-store error counters. |
-| Compatibility matrix | M6 Docker-backed tests pass for the Core 5 path-style matrix: AWS SDK Java v2, AWS CLI, boto3, AWS SDK JavaScript v3, and AWS SDK Go v2. See `docs/COMPATIBILITY_M6.md`. |
+| Compatibility matrix | Docker-backed tests pass for the Core 5 path-style matrix plus the M10 extended clients: AWS SDK Kotlin, MinIO `mc`, `rclone`, and `s5cmd`. See `docs/COMPATIBILITY_M6.md`. |
 | Access keys | Metadata-backed access keys with ACTIVE/DISABLED/DELETED lifecycle. DB-backed auth lookup means create/disable/rotate/delete take effect without server restart. |
 | Secret storage | Access-key secrets can be stored encrypted with AES-GCM using `S3_ACCESS_KEY_SECRET_ENCRYPTION_KEY`; plaintext dev bootstrap remains available unless `S3_REQUIRE_ENCRYPTED_SECRETS=true`. |
 | Object encryption | Optional SSE-S3-style encryption at rest with AES-GCM when `S3_OBJECT_ENCRYPTION_MODE=sse-s3` and `S3_OBJECT_ENCRYPTION_MASTER_KEY` are configured. New object, copy, multipart-part, and completed multipart blobs are stored encrypted while S3 ETag, checksum, size, range, copy, recovery, GC, backup, and restore semantics remain plaintext-compatible. `GetObject`/`HeadObject` echo `x-amz-server-side-encryption: AES256` for encrypted metadata rows. Existing plaintext blobs remain readable. |
@@ -59,7 +60,8 @@
 
 | Operation | Status |
 |-----------|--------|
-| Streaming SigV4 (`aws-chunked`) | Unsupported. M6 Core 5 clients pass with non-streaming/file/buffer bodies; detection tests record that this mode is not required by the supported configuration. |
+| Streaming SigV4 per-chunk signature verification | aws-chunked bodies are decoded, but per-chunk signatures are not verified yet. |
+| DeleteObjects | Not implemented. Some CLIs use this for wildcard or recursive delete cleanup. |
 | Virtual-host style addressing | Unsupported. M6 Core 5 support requires explicit path-style endpoint configuration; detection tests record virtual-host behavior separately. |
 | `If-Modified-Since` / `If-Unmodified-Since` on CopyObject | M6 compatibility hardening (currently accepted but not enforced) |
 | Object versioning | out of scope |

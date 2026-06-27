@@ -13,6 +13,7 @@ dependencies {
 
     add("testImplementation", "software.amazon.awssdk:s3:2.46.17")
     add("testImplementation", "software.amazon.awssdk:apache-client:2.46.17")
+    add("testImplementation", "aws.sdk.kotlin:s3:1.6.102")
 
     add("testImplementation", platform("org.junit:junit-bom:6.1.0"))
     add("testImplementation", "org.junit.jupiter:junit-jupiter")

@@ -180,7 +180,7 @@ class MultipartHandlers(
         val write = blobStore.beginWrite(expectedSha256Hex = expectedSha256)
         var intentId: String? = null
         try {
-            val input: InputStream = call.receiveStream()
+            val input: InputStream = requestPayloadStream(call)
             input.copyTo(object : OutputStream() {
                 override fun write(b: Int) {
                     write.write(byteArrayOf(b.toByte()), 0, 1)

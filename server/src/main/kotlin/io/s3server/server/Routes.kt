@@ -225,9 +225,9 @@ fun Application.s3Routes(config: ServerConfig, handlers: S3Handlers, multipart: 
                         return@put
                     }
 
-                    val contentLength = call.request.headers[HttpHeaders.ContentLength]?.toLongOrNull()
-                    val expectedSha256 = call.request.headers["x-amz-content-sha256"]
-                        ?.takeIf { it != "UNSIGNED-PAYLOAD" }
+                    val encodedContentLength = call.request.headers[HttpHeaders.ContentLength]?.toLongOrNull()
+                    val contentLength = decodedContentLength(call.request.headers, encodedContentLength)
+                    val expectedSha256 = payloadSha256Expectation(call.request.headers["x-amz-content-sha256"])
                     val expectedMd5Base64 = call.request.headers["Content-MD5"]
                     val checksumCrc32 = call.request.headers["x-amz-checksum-crc32"]
                     val checksumCrc32C = call.request.headers["x-amz-checksum-crc32c"]
@@ -313,10 +313,10 @@ fun Application.s3Routes(config: ServerConfig, handlers: S3Handlers, multipart: 
                 val cacheControl = call.request.headers[HttpHeaders.CacheControl]
                 val contentDisposition = call.request.headers[HttpHeaders.ContentDisposition]
                 val expires = call.request.headers[HttpHeaders.Expires]
-                val expectedSha256 = call.request.headers["x-amz-content-sha256"]
-                    ?.takeIf { it != "UNSIGNED-PAYLOAD" }
+                val expectedSha256 = payloadSha256Expectation(call.request.headers["x-amz-content-sha256"])
                 val expectedMd5Base64 = call.request.headers["Content-MD5"]
-                val contentLength = call.request.headers[HttpHeaders.ContentLength]?.toLongOrNull()
+                val encodedContentLength = call.request.headers[HttpHeaders.ContentLength]?.toLongOrNull()
+                val contentLength = decodedContentLength(call.request.headers, encodedContentLength)
                 val ifNoneMatch = call.request.headers[HttpHeaders.IfNoneMatch]
                 val storageClass = call.request.headers["x-amz-storage-class"]
                 val checksumCrc32 = call.request.headers["x-amz-checksum-crc32"]

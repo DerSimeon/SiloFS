@@ -266,9 +266,11 @@ When `PutObject` returns 200:
 
 The same contract applies to `UploadPart` and `CompleteMultipartUpload`.
 
-## Known limitations (post-M6)
+## Known limitations (post-M10 compatibility expansion)
 
-* No streaming SigV4 (`aws-chunked` payloads). M6 Core 5 clients pass without it.
+* `aws-chunked` upload bodies are decoded for object and multipart-part uploads,
+  but per-chunk SigV4 signatures are not verified yet.
+* No DeleteObjects API. Some CLIs use this for wildcard or recursive cleanup.
 * No virtual-host style addressing. Configure supported clients for path-style.
 * SSE-S3 object encryption is supported when explicitly configured. SSE-C,
   SSE-KMS, and external KMS integration are unsupported.
@@ -297,8 +299,9 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Key points:
   part-row deletion + `COMPLETED` state change happen in one transaction.
 * **Concurrency**: Ktor Netty event loop with `Dispatchers.IO` for blocking
   calls. Large uploads and downloads never materialise fully in memory.
-* **Streaming**: `respondOutputStream` for downloads, `receiveStream` for
-  uploads.
+* **Streaming**: `respondOutputStream` for downloads; uploads use a request body
+  stream, with aws-chunked framing decoded before blob ingestion when required
+  by compatible clients.
 * **Idempotent recovery**: every sweep step is safe to crash mid-execution.
 * **Admin inspection**: `silofs admin check-blobs` reports missing referenced
   blobs and orphan content blobs without mutating data; `silofs admin
@@ -307,9 +310,9 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Key points:
   return S3 `SlowDown` (503) when saturated. `/readyz` checks DB, data-dir
   writeability, and free disk. `/metricsz` exports request, limiter, DB pool,
   recovery, and blob-store counters.
-* **Compatibility**: Core 5 path-style matrix is tested in `:compatibility-test`;
-  virtual-host addressing and `aws-chunked` streaming are recorded as
-  unsupported detection rows.
+* **Compatibility**: Core 5 plus the M10 extended path-style matrix are tested
+  in `:compatibility-test`; virtual-host addressing and unsupported client
+  behaviors are recorded as detection rows.
 * **Security**: access keys are metadata-backed, lifecycle-managed, optionally
   encrypted at rest, rate-limitable per key, and audited for mutating actions.
   Object blobs can be encrypted with local SSE-S3 AES-GCM. TLS should terminate
@@ -317,5 +320,6 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Key points:
 
 ## Next steps
 
-1. Complete the M9 production readiness review and declared-limit report.
-2. Build the standalone M10 CLI for mc-like operator workflows.
+1. Build the standalone M10 CLI for mc-like operator workflows.
+2. Keep expanding compatibility evidence only when it tightens the declared
+   support envelope.
