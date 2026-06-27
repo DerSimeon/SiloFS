@@ -125,8 +125,17 @@ Run before claiming this report for a release candidate:
 
 ```powershell
 .\gradlew :metadata:test :blob:test :server:test :integration-test:test :compatibility-test:test -x detekt
-.\gradlew :integration-test:test --tests "app.silofs.test.S3ServerFailpointCrashTest" --tests "app.silofs.test.S3ServerConcurrencyTest" -x detekt --rerun-tasks
-.\gradlew :integration-test:test --tests "app.silofs.test.S3ServerEncryptionTest" --tests "app.silofs.test.S3ServerLoadSmokeTest" -x detekt --rerun-tasks
+.\gradlew dockerBackedVerification -x detekt
+.\gradlew productionFocusedVerification -x detekt
+.\gradlew :integration-test:failpointCrashTest :integration-test:concurrencyTest -x detekt --rerun-tasks
+.\gradlew :integration-test:loadSmokeTest :integration-test:encryptionSmokeTest -x detekt --rerun-tasks
+.\gradlew :compatibility-test:extendedCompatibilityTest -x detekt --rerun-tasks
 git diff --check
 ```
 
+Use the named focused tasks for repeated verification runs. Running two
+separate Gradle processes against the same `Test` task with different
+`--tests` filters can still race on Gradle's binary test-result files; the
+focused tasks use isolated result, report, and JaCoCo output directories.
+When forcing recompilation with `--rerun-tasks`, keep focused checks in one
+Gradle invocation because Kotlin/JVM compilation outputs remain module-shared.

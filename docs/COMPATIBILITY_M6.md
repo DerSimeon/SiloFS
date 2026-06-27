@@ -9,10 +9,14 @@ Virtual-host addressing is a detection/reporting item, not supported behavior. `
 ## Verification command
 
 ```bash
-./gradlew :integration-test:test :compatibility-test:test -x detekt
+./gradlew dockerBackedVerification -x detekt
+./gradlew :compatibility-test:extendedCompatibilityTest -x detekt
 ```
 
 The `:compatibility-test` module boots the Ktor server with PostgreSQL through Testcontainers, exposes the random server port to Docker clients with `host.testcontainers.internal`, and runs each non-JVM client in a pinned container image.
+The named extended task writes to isolated Gradle test-result and JaCoCo
+outputs. Use one Gradle invocation when forcing recompilation with
+`--rerun-tasks`, because module compilation outputs are still shared.
 
 ## Core 5 results
 

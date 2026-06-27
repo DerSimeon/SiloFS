@@ -1,3 +1,5 @@
+import org.gradle.api.tasks.SourceSetContainer
+import org.gradle.api.tasks.testing.Test
 import java.time.Duration
 
 plugins {
@@ -27,4 +29,42 @@ tasks.withType<Test>().configureEach {
     timeout.set(Duration.ofMinutes(25))
     maxParallelForks = 1
     jvmArgs("-Xmx1g")
+}
+
+val testSourceSet = extensions.getByType<SourceSetContainer>().named("test").get()
+
+tasks.register<Test>("extendedCompatibilityTest") {
+    group = "verification"
+    description = "Runs the extended Docker-backed compatibility matrix with isolated Gradle test outputs."
+    testClassesDirs = testSourceSet.output.classesDirs
+    classpath = testSourceSet.runtimeClasspath
+    useJUnitPlatform()
+    filter {
+        includeTestsMatching("app.silofs.compat.ExtendedCompatibilityTest")
+    }
+    timeout.set(Duration.ofMinutes(25))
+    maxParallelForks = 1
+    jvmArgs("-Xmx1g")
+    binaryResultsDirectory.set(layout.buildDirectory.dir("test-results/$name/binary"))
+    reports.junitXml.outputLocation.set(layout.buildDirectory.dir("test-results/$name/xml"))
+    reports.html.outputLocation.set(layout.buildDirectory.dir("reports/tests/$name"))
+    extensions.configure<org.gradle.testing.jacoco.plugins.JacocoTaskExtension>(
+        "jacoco",
+    ) {
+        destinationFile =
+            layout.buildDirectory
+                .file("jacoco/$name.exec")
+                .get()
+                .asFile
+        isIncludeNoLocationClasses = true
+        excludes = listOf("jdk.internal.*")
+    }
+}
+
+tasks.named("test") {
+    mustRunAfter(":integration-test:test")
+}
+
+tasks.named("extendedCompatibilityTest") {
+    mustRunAfter(":integration-test:encryptionSmokeTest")
 }

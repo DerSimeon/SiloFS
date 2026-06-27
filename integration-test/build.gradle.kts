@@ -1,3 +1,5 @@
+import org.gradle.api.tasks.SourceSetContainer
+import org.gradle.api.tasks.testing.Test
 import java.time.Duration
 
 plugins {
@@ -36,4 +38,76 @@ tasks.withType<Test>().configureEach {
     maxParallelForks = 1
     // Increase heap for the AWS SDK + testcontainers combo.
     jvmArgs("-Xmx1g")
+}
+
+val testSourceSet = extensions.getByType<SourceSetContainer>().named("test").get()
+
+fun registerFocusedIntegrationTest(
+    taskName: String,
+    className: String,
+    descriptionText: String,
+) {
+    tasks.register<Test>(taskName) {
+        group = "verification"
+        description = descriptionText
+        testClassesDirs = testSourceSet.output.classesDirs
+        classpath = testSourceSet.runtimeClasspath
+        useJUnitPlatform()
+        filter {
+            includeTestsMatching(className)
+        }
+        timeout.set(Duration.ofMinutes(15))
+        maxParallelForks = 1
+        jvmArgs("-Xmx1g")
+        binaryResultsDirectory.set(layout.buildDirectory.dir("test-results/$taskName/binary"))
+        reports.junitXml.outputLocation.set(layout.buildDirectory.dir("test-results/$taskName/xml"))
+        reports.html.outputLocation.set(layout.buildDirectory.dir("reports/tests/$taskName"))
+        extensions.configure<org.gradle.testing.jacoco.plugins.JacocoTaskExtension>(
+            "jacoco",
+        ) {
+            destinationFile =
+                layout.buildDirectory
+                    .file("jacoco/$taskName.exec")
+                    .get()
+                    .asFile
+            isIncludeNoLocationClasses = true
+            excludes = listOf("jdk.internal.*")
+        }
+    }
+}
+
+registerFocusedIntegrationTest(
+    taskName = "failpointCrashTest",
+    className = "app.silofs.test.S3ServerFailpointCrashTest",
+    descriptionText = "Runs crash/failpoint durability tests with isolated Gradle test outputs.",
+)
+
+registerFocusedIntegrationTest(
+    taskName = "concurrencyTest",
+    className = "app.silofs.test.S3ServerConcurrencyTest",
+    descriptionText = "Runs focused concurrency/race tests with isolated Gradle test outputs.",
+)
+
+registerFocusedIntegrationTest(
+    taskName = "loadSmokeTest",
+    className = "app.silofs.test.S3ServerLoadSmokeTest",
+    descriptionText = "Runs the production load smoke test with isolated Gradle test outputs.",
+)
+
+registerFocusedIntegrationTest(
+    taskName = "encryptionSmokeTest",
+    className = "app.silofs.test.S3ServerEncryptionTest",
+    descriptionText = "Runs encryption-at-rest integration tests with isolated Gradle test outputs.",
+)
+
+tasks.named("concurrencyTest") {
+    mustRunAfter(tasks.named("failpointCrashTest"))
+}
+
+tasks.named("loadSmokeTest") {
+    mustRunAfter(tasks.named("concurrencyTest"))
+}
+
+tasks.named("encryptionSmokeTest") {
+    mustRunAfter(tasks.named("loadSmokeTest"))
 }

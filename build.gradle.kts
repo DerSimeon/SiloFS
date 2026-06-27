@@ -64,7 +64,9 @@ subprojects {
             showStandardStreams = false
         }
         maxParallelForks = (Runtime.getRuntime().availableProcessors() / 2).coerceAtLeast(1)
-        finalizedBy(tasks.named("jacocoTestReport"))
+        if (name == "test") {
+            finalizedBy(tasks.named("jacocoTestReport"))
+        }
         extensions.configure<JacocoTaskExtension>("jacoco") {
             isIncludeNoLocationClasses = true
             excludes = listOf("jdk.internal.*")
@@ -113,4 +115,22 @@ subprojects {
             exclude { it.file.path.contains("/generated/") }
         }
     }
+}
+
+tasks.register("dockerBackedVerification") {
+    group = "verification"
+    description = "Runs the full Docker-backed integration and compatibility suites in a deterministic order."
+    dependsOn(":integration-test:test", ":compatibility-test:test")
+}
+
+tasks.register("productionFocusedVerification") {
+    group = "verification"
+    description = "Runs focused production-readiness checks with isolated test output directories."
+    dependsOn(
+        ":integration-test:failpointCrashTest",
+        ":integration-test:concurrencyTest",
+        ":integration-test:loadSmokeTest",
+        ":integration-test:encryptionSmokeTest",
+        ":compatibility-test:extendedCompatibilityTest",
+    )
 }

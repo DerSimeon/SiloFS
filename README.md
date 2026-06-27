@@ -187,11 +187,23 @@ silofs/
 ./gradlew check                       # above + 90% coverage verification
 ./gradlew :integration-test:test      # AWS SDK + Testcontainers suite
 ./gradlew :compatibility-test:test    # M6 Core 5 Docker-backed matrix
+./gradlew dockerBackedVerification    # full Docker-backed suites, ordered
+./gradlew productionFocusedVerification # failpoint/concurrency/load/encryption/extended matrix
 ./gradlew jacocoTestReport            # aggregate coverage report
 ./gradlew jacocoCoverageVerification  # enforce 90% line / 85% branch
 ```
 
 Coverage reports are written to `*/build/reports/jacoco/test/html/index.html`.
+For repeated focused production checks, prefer the named Gradle tasks
+(`:integration-test:failpointCrashTest`,
+`:integration-test:concurrencyTest`, `:integration-test:loadSmokeTest`,
+`:integration-test:encryptionSmokeTest`, and
+`:compatibility-test:extendedCompatibilityTest`) over multiple concurrent
+`--tests` filtered invocations of the same `test` task. Each named task writes
+to isolated test-result and JaCoCo output directories. If you need
+`--rerun-tasks`, run the focused tasks in one Gradle invocation rather than
+starting multiple Gradle processes; recompilation outputs are still shared by
+the module.
 
 Standalone CLI:
 
