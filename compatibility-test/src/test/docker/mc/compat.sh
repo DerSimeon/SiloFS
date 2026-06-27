@@ -61,8 +61,10 @@ case "$(mc stat --json "$ALIAS/$BUCKET/multipart.bin")" in
   *) echo "multipart size mismatch" >&2; exit 1 ;;
 esac
 
-echo "DETECTION mc rm-rb=uses-deleteobjects-unsupported"
+mc rm --recursive --force "$ALIAS/$BUCKET" >/dev/null
+mc rb "$ALIAS/$BUCKET" >/dev/null
+echo "DETECTION mc rm-rb=deleteobjects-supported"
 
 echo "DETECTION mc virtual-host=not-run path-style-required-configured"
-echo "DETECTION mc streaming-sigv4=aws-chunked-required-decoded-without-per-chunk-verification"
+echo "DETECTION mc streaming-sigv4=aws-chunked-required-and-verified"
 echo "COMPAT PASS mc contract"

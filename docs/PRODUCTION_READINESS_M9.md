@@ -115,7 +115,7 @@ Track:
 - IAM, ACLs, bucket policies, Object Lock, and lifecycle policies.
 - object versioning.
 - SSE-C, SSE-KMS, and external KMS.
-- streaming SigV4 / `aws-chunked`.
+- virtual-host style addressing.
 - virtual-host style addressing.
 - online write-consistent backups.
 
@@ -124,18 +124,16 @@ Track:
 Run before claiming this report for a release candidate:
 
 ```powershell
-.\gradlew :metadata:test :blob:test :server:test :integration-test:test :compatibility-test:test -x detekt
-.\gradlew dockerBackedVerification -x detekt
-.\gradlew productionFocusedVerification -x detekt
-.\gradlew :integration-test:failpointCrashTest :integration-test:concurrencyTest -x detekt --rerun-tasks
-.\gradlew :integration-test:loadSmokeTest :integration-test:encryptionSmokeTest -x detekt --rerun-tasks
-.\gradlew :compatibility-test:extendedCompatibilityTest -x detekt --rerun-tasks
-git diff --check
+powershell -File scripts/verify-production.ps1 -Rerun
 ```
 
-Use the named focused tasks for repeated verification runs. Running two
-separate Gradle processes against the same `Test` task with different
-`--tests` filters can still race on Gradle's binary test-result files; the
-focused tasks use isolated result, report, and JaCoCo output directories.
-When forcing recompilation with `--rerun-tasks`, keep focused checks in one
-Gradle invocation because Kotlin/JVM compilation outputs remain module-shared.
+```bash
+./scripts/verify-production.sh --rerun
+```
+
+The scripts acquire `build/locks/production-verification.lock` before running
+the forced rebuild path, execute Gradle verification in one serial invocation
+with `--no-parallel --max-workers=1`, run the Dockerized Go CLI test/build
+smoke, and finish with `git diff --check`. Use the named focused Gradle tasks
+for local debugging, but do not start multiple independent Gradle processes
+with `--rerun-tasks`; Kotlin/JVM compilation outputs are module-shared.

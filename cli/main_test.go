@@ -2,7 +2,13 @@ package main
 
 import (
 	"bytes"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/binary"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -87,4 +93,82 @@ func TestDryRunRequiredForRepair(t *testing.T) {
 	if !strings.Contains(err.Error(), "--dry-run") {
 		t.Fatalf("expected dry-run validation, got %v", err)
 	}
+}
+
+func TestVerifyEncryptedBlob(t *testing.T) {
+	key := bytes.Repeat([]byte{3}, 32)
+	plaintext := []byte("encrypted object")
+	blob, sha := testEncryptedBlob(t, key, plaintext)
+
+	if err := verifyEncryptedBlob(blob, sha, base64.StdEncoding.EncodeToString(key)); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyEncryptedBlob(blob, sha, base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{4}, 32))); err == nil {
+		t.Fatal("expected wrong key failure")
+	}
+}
+
+func TestVerifyBlobNameRequiresKeyForEncryptedBlob(t *testing.T) {
+	key := bytes.Repeat([]byte{5}, 32)
+	blob, sha := testEncryptedBlob(t, key, []byte("secret"))
+	dir := t.TempDir()
+	path := blobPath(dir, sha)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, blob, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := verifyBlobName(appConfig{DataDir: dir}, sha)
+	if err == nil || !strings.Contains(err.Error(), "requires object encryption key") {
+		t.Fatalf("expected missing key error, got %v", err)
+	}
+	if err := verifyBlobName(
+		appConfig{DataDir: dir, ObjectKeyB64: base64.StdEncoding.EncodeToString(key)},
+		sha,
+	); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func testEncryptedBlob(t *testing.T, key []byte, plaintext []byte) ([]byte, string) {
+	t.Helper()
+	nonce := bytes.Repeat([]byte{9}, 12)
+	keyID := []byte("local-v1")
+	sum := sha256.Sum256(plaintext)
+	header := bytes.NewBuffer(nil)
+	header.WriteString("SILOFSENC1")
+	header.WriteByte(1)
+	header.Write(nonce)
+	if err := binary.Write(header, binary.BigEndian, uint16(len(keyID))); err != nil {
+		t.Fatal(err)
+	}
+	header.Write(keyID)
+	if err := binary.Write(header, binary.BigEndian, uint64(len(plaintext))); err != nil {
+		t.Fatal(err)
+	}
+	header.Write(sum[:])
+
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := append([]byte{}, header.Bytes()...)
+	out = gcm.Seal(out, nonce, plaintext, header.Bytes())
+	return out, base64Hex(sum[:])
+}
+
+func base64Hex(bytes []byte) string {
+	const alphabet = "0123456789abcdef"
+	out := make([]byte, len(bytes)*2)
+	for i, b := range bytes {
+		out[i*2] = alphabet[b>>4]
+		out[i*2+1] = alphabet[b&0x0f]
+	}
+	return string(out)
 }

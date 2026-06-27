@@ -3,8 +3,9 @@
 A from-scratch, production-leaning S3-compatible storage server written in
 Kotlin with Ktor, coroutines, PostgreSQL for metadata, and a local filesystem
 for blob storage. Designed to be testable against the M6 Core 5 path-style
-client matrix: AWS SDK Java v2, AWS CLI, boto3, AWS SDK JavaScript v3, and AWS
-SDK Go v2.
+client matrix plus the M10 extended matrix: AWS SDK Java v2, AWS CLI, boto3,
+AWS SDK JavaScript v3, AWS SDK Go v2, AWS SDK Kotlin, MinIO `mc`, `rclone`,
+and `s5cmd`.
 
 > **Status**: Milestones 1 through 6 delivered for the single-node envelope. See [docs/MILESTONES.md](docs/MILESTONES.md)
 > for the roadmap and [docs/S3_FEATURES.md](docs/S3_FEATURES.md) for the
@@ -151,6 +152,7 @@ s3c := s3.NewFromConfig(cfg, func(o *s3.Options) {
 | `GetObject` | M1 | Full + `Range`, conditional (`If-Match`/`If-None-Match`). |
 | `HeadObject` | M1 | Same headers as GET. |
 | `DeleteObject` | M1 | Idempotent, 204. |
+| `DeleteObjects` | M12 | Batch delete for recursive/wildcard CLI cleanup. |
 | `CopyObject` | M2.1 | Server-side, `COPY`/`REPLACE` directive, conditional. |
 | `ListObjectsV2` | M1/M2.1 | Pagination, `prefix`, `delimiter`, `encoding-type=url`. |
 | `CreateMultipartUpload` | M3 | Returns `UploadId`. |
@@ -189,6 +191,8 @@ silofs/
 ./gradlew :compatibility-test:test    # M6 Core 5 Docker-backed matrix
 ./gradlew dockerBackedVerification    # full Docker-backed suites, ordered
 ./gradlew productionFocusedVerification # failpoint/concurrency/load/encryption/extended matrix
+powershell -File scripts/verify-production.ps1 -Rerun # locked Windows release verification
+./scripts/verify-production.sh --rerun # locked Linux release verification
 ./gradlew jacocoTestReport            # aggregate coverage report
 ./gradlew jacocoCoverageVerification  # enforce 90% line / 85% branch
 ```
@@ -204,6 +208,11 @@ to isolated test-result and JaCoCo output directories. If you need
 `--rerun-tasks`, run the focused tasks in one Gradle invocation rather than
 starting multiple Gradle processes; recompilation outputs are still shared by
 the module.
+
+The production verification scripts acquire `build/locks/production-verification.lock`
+and run Gradle with `--no-parallel --max-workers=1` before forced rebuild
+checks. Use them for release sign-off instead of starting multiple independent
+Gradle processes with `--rerun-tasks`.
 
 Standalone CLI:
 
@@ -289,11 +298,11 @@ When `PutObject` returns 200:
 
 The same contract applies to `UploadPart` and `CompleteMultipartUpload`.
 
-## Known limitations (post-M10 compatibility expansion)
+## Compatibility notes and known limitations
 
-* `aws-chunked` upload bodies are decoded for object and multipart-part uploads,
-  but per-chunk SigV4 signatures are not verified yet.
-* No DeleteObjects API. Some CLIs use this for wildcard or recursive cleanup.
+* Signed `aws-chunked` upload bodies are decoded and verified per chunk for
+  object and multipart-part uploads.
+* `DeleteObjects` is supported for batch object cleanup.
 * No virtual-host style addressing. Configure supported clients for path-style.
 * SSE-S3 object encryption is supported when explicitly configured. SSE-C,
   SSE-KMS, and external KMS integration are unsupported.
@@ -344,6 +353,6 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Key points:
 
 ## Next steps
 
-1. Build the standalone M10 CLI for mc-like operator workflows.
+1. Wire the locked production verification scripts into CI.
 2. Keep expanding compatibility evidence only when it tightens the declared
    support envelope.

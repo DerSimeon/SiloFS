@@ -427,10 +427,10 @@ Clients:
 - boto3: supported in the Core 5 path-style matrix
 - AWS SDK for JavaScript v3: supported in the Core 5 path-style matrix
 - AWS SDK for Go v2: supported in the Core 5 path-style matrix
-- AWS SDK for Kotlin: not yet claimed
-- MinIO `mc`: not yet claimed
-- optional `rclone`: not yet claimed
-- optional `s5cmd`: not yet claimed
+- AWS SDK for Kotlin: supported in the M10 extended path-style matrix
+- MinIO `mc`: supported in the M10 extended path-style matrix
+- `rclone`: supported in the M10 extended path-style matrix
+- `s5cmd`: supported in the M10 extended path-style matrix
 
 Deliverables:
 
@@ -462,11 +462,9 @@ Compatibility areas:
 - weird keys
 - large objects
 
-Known gaps at end of M6:
+Known gaps after M10 compatibility expansion:
 
 - virtual-host style addressing remains unsupported; Core 5 clients must be configured for path-style
-- streaming SigV4 / `aws-chunked` remains unsupported; Core 5 tests use bodies that do not require it
-- AWS SDK Kotlin, MinIO `mc`, `rclone`, and `s5cmd` are not part of the claimed M6 support matrix
 - any future client-specific incompatibility must be documented with reproduction steps in `docs/COMPATIBILITY_M6.md`
 
 ## Milestone 7 — security hardening
@@ -649,7 +647,7 @@ Exit criteria:
 
 ## Milestone 10 — standalone CLI
 
-Status: complete for the M10 scope. The Docker-backed compatibility expansion covers AWS SDK Kotlin, MinIO `mc`, `rclone`, and `s5cmd`. The compatibility work added aws-chunked request-body decoding required by `mc`. A standalone Go `silofs` CLI now provides S3 client workflows and local PostgreSQL/blob-directory admin workflows. Per-chunk SigV4 verification and DeleteObjects remain documented compatibility gaps, not M10 blockers.
+Status: complete for the M10 scope. The Docker-backed compatibility expansion covers AWS SDK Kotlin, MinIO `mc`, `rclone`, and `s5cmd`. The compatibility work added aws-chunked request-body decoding required by `mc`. A standalone Go `silofs` CLI now provides S3 client workflows and local PostgreSQL/blob-directory admin workflows. M12 later closed the signed aws-chunked verification and DeleteObjects cleanup gaps.
 
 Provide a separate `silofs` operator/client CLI that can be built into an easy-to-deploy Linux binary, similar in spirit to `mc`, instead of requiring operators to invoke the server jar for admin workflows.
 
@@ -670,3 +668,47 @@ Tests:
 Production statement:
 
 After M9, the software may be considered production-candidate for single-node deployments, subject to successful sign-off against the declared limits and operational requirements. Do not claim general S3 compatibility or broad production readiness beyond the tested scope.
+
+## Milestone 11 — release hardening and verification reliability
+
+Status: implementation complete; awaiting first remote CI run for external
+release evidence. M11 makes release verification repeatable and removes stale
+branding/doc inconsistencies before final production-ready claims.
+
+Deliverables:
+
+- locked production verification scripts for Windows and Linux
+- one blessed forced-rerun verification path that avoids competing Gradle processes
+- CI jobs for JVM tests, Docker-backed compatibility, focused production checks, and Go CLI build/test
+- physical source tree paths aligned with `app.silofs`
+- stale milestone, compatibility, encryption, and unsupported-feature docs cleaned up
+- release checklist updated to use the locked verification scripts
+
+Exit criteria:
+
+- `scripts/verify-production.ps1 -Rerun` passes on Windows with Docker Desktop
+- `scripts/verify-production.sh --rerun` passes on Linux with Docker
+- concurrent script invocations serialize on `build/locks/production-verification.lock`
+- source paths, package names, and docs consistently use `app/silofs` and `app.silofs`
+- no stale compatibility docs contradict the M10 matrix or M8.5 encryption status
+
+## Milestone 12 — production closure and security/compatibility gaps
+
+Status: implementation complete; awaiting first remote CI run for external
+release evidence. M12 closes the remaining blockers before calling the project
+production-ready for the declared single-node envelope.
+
+Deliverables:
+
+- per-chunk SigV4 verification for signed `aws-chunked` uploads
+- `DeleteObjects` support for recursive CLI cleanup workflows
+- encrypted blob decryptability verification in the Go CLI
+- final CI-backed release evidence using the M11 scripts
+- final production-ready report that distinguishes supported single-node operation from intentionally unsupported S3 and distributed-system features
+
+Exit criteria:
+
+- supported compatibility clients pass without detection-only cleanup gaps that affect normal workflows
+- security review accepts the final `aws-chunked` policy
+- CLI `admin check-blobs` verifies encrypted blobs with correct/missing/wrong key behavior
+- full locked release verification passes from a clean checkout

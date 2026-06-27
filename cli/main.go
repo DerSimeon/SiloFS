@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -867,7 +868,72 @@ func verifyBlobName(cfg appConfig, sha string) error {
 	if cfg.ObjectKeyB64 == "" {
 		return fmt.Errorf("blob bytes do not match sha256; encrypted verification requires object encryption key")
 	}
-	return fmt.Errorf("encrypted blob decryptability verification is not implemented in the CLI yet")
+	return verifyEncryptedBlob(raw, sha, cfg.ObjectKeyB64)
+}
+
+func verifyEncryptedBlob(raw []byte, expectedSHA string, keyB64 string) error {
+	const magic = "SILOFSENC1"
+	if len(raw) < len(magic)+1+12+2+8+32 || string(raw[:len(magic)]) != magic {
+		return fmt.Errorf("blob bytes do not match sha256 and are not a silofs encrypted blob")
+	}
+	pos := len(magic)
+	if raw[pos] != 1 {
+		return fmt.Errorf("unsupported silofs encrypted blob version: %d", raw[pos])
+	}
+	pos++
+	nonce := raw[pos : pos+12]
+	pos += 12
+	keyIDLen := int(binary.BigEndian.Uint16(raw[pos : pos+2]))
+	pos += 2
+	if len(raw) < pos+keyIDLen+8+32 {
+		return fmt.Errorf("truncated silofs encrypted blob header")
+	}
+	pos += keyIDLen
+	plaintextSize := int64(binary.BigEndian.Uint64(raw[pos : pos+8]))
+	pos += 8
+	plaintextSHA := raw[pos : pos+32]
+	pos += 32
+	header := raw[:pos]
+	ciphertext := raw[pos:]
+
+	key, err := base64.StdEncoding.DecodeString(keyB64)
+	if err != nil {
+		return fmt.Errorf("invalid object encryption key: %w", err)
+	}
+	if len(key) != 32 {
+		return fmt.Errorf("object encryption key must decode to 32 bytes")
+	}
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return err
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return err
+	}
+	plaintext, err := gcm.Open(nil, nonce, ciphertext, header)
+	if err != nil {
+		return fmt.Errorf("encrypted blob decryptability verification failed: %w", err)
+	}
+	if int64(len(plaintext)) != plaintextSize {
+		return fmt.Errorf("encrypted blob plaintext size mismatch: expected=%d actual=%d", plaintextSize, len(plaintext))
+	}
+	sum := sha256.Sum256(plaintext)
+	if hex.EncodeToString(sum[:]) != expectedSHA || !equalBytes(sum[:], plaintextSHA) {
+		return fmt.Errorf("encrypted blob plaintext SHA-256 mismatch: expected=%s actual=%s", expectedSHA, hex.EncodeToString(sum[:]))
+	}
+	return nil
+}
+
+func equalBytes(a []byte, b []byte) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	var diff byte
+	for i := range a {
+		diff |= a[i] ^ b[i]
+	}
+	return diff == 0
 }
 
 func blobPath(dataDir, sha string) string {

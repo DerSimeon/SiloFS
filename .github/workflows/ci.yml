@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  jvm-module-tests:
+    name: JVM module tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Run module tests
+        run: ./gradlew :metadata:test :blob:test :server:test ktlintCheck -x detekt --no-parallel --max-workers=1
+
+  docker-backed-tests:
+    name: Docker-backed S3 and compatibility tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Run Docker-backed verification
+        run: ./gradlew :integration-test:test :compatibility-test:test dockerBackedVerification -x detekt --no-parallel --max-workers=1
+
+  go-cli:
+    name: Go CLI tests and Linux binary
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test and build CLI in pinned Go container
+        run: >
+          docker run --rm
+          -v "$PWD/cli:/src"
+          -w /src
+          golang:1.23.5-bookworm
+          sh -c "go test ./... && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags '-s -w' -o /tmp/silofs . && /tmp/silofs version"
+
+  production-verification:
+    name: Locked production verification
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Run locked production verification
+        run: sh scripts/verify-production.sh --skip-go

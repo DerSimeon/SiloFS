@@ -37,6 +37,7 @@ Common variables:
 | `--db-user` | `SILOS_DB_USER` | `S3_DB_USER` |
 | `--db-password` | `SILOS_DB_PASSWORD` | `S3_DB_PASSWORD` |
 | `--data-dir` | `SILOS_DATA_DIR` | `S3_DATA_DIR` |
+| `--object-encryption-master-key` | `SILOS_OBJECT_ENCRYPTION_MASTER_KEY` | `S3_OBJECT_ENCRYPTION_MASTER_KEY` |
 
 ## S3 commands
 
@@ -85,7 +86,7 @@ Encrypted access-key secret creation and rotation are compatible with the server
 when `SILOS_ACCESS_KEY_SECRET_ENCRYPTION_KEY` or
 `S3_ACCESS_KEY_SECRET_ENCRYPTION_KEY` is set to a base64 32-byte AES-GCM key.
 
-Encrypted object consistency verification can confirm file presence by
-plaintext SHA-256 reference. Full decryptability checks require the configured
-object encryption key and remain conservative: the command fails clearly instead
-of silently treating encrypted blobs as plaintext.
+Encrypted object consistency verification decrypts blob headers and ciphertext
+when `SILOS_OBJECT_ENCRYPTION_MASTER_KEY` or
+`S3_OBJECT_ENCRYPTION_MASTER_KEY` is configured. Missing or wrong keys fail
+clearly instead of silently treating encrypted blobs as plaintext.

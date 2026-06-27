@@ -189,12 +189,15 @@ SigV4 is implemented in the `auth` module and exposed as a Ktor
 
 1. Parses `Authorization: AWS4-HMAC-SHA256 ...` and `x-amz-date`.
 2. Reconstructs the canonical request from method, URI, query, headers, signed
-   headers, and payload hash. For streaming uploads the hash is `UNSIGNED-PAYLOAD`.
+   headers, and payload hash. For streaming uploads the canonical hash may be
+   the SigV4 streaming sentinel.
 3. Derives the signing key from the secret, date, region, and service
    (`s3`).
 4. Compares the computed signature to the one in the request using a constant-time
    compare.
-5. On mismatch, responds with the standard S3 `SignatureDoesNotMatch` XML.
+5. Stores the verified SigV4 signing context on the Ktor call so signed
+   aws-chunked request bodies can verify each chunk signature while streaming.
+6. On mismatch, responds with the standard S3 `SignatureDoesNotMatch` XML.
 
 Credentials are loaded from `access_keys` in Postgres. Access-key lifecycle
 state is checked on every request, so disabling, deleting, or rotating a key
@@ -254,6 +257,7 @@ M6 compatibility support is intentionally narrower than AWS S3:
 * AWS CLI uses `--endpoint-url` and `s3.addressing_style = path`.
 
 The compatibility tests also record virtual-host and streaming SigV4 detection
-results. Those modes are not silently claimed: virtual-host routing and
-`aws-chunked` request decoding remain unsupported until a future milestone
-explicitly adds and tests them.
+results. Virtual-host routing is not claimed. Signed `aws-chunked` request
+bodies are decoded and per-chunk signatures are verified for object and
+multipart-part uploads; unsigned trailer mode is decoded for clients that use
+that framing.

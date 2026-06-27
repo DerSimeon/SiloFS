@@ -4,7 +4,7 @@ M6 proves a declared client matrix rather than broad AWS S3 equivalence. The sup
 
 `http://host:port/bucket/key`
 
-Virtual-host addressing is a detection/reporting item, not supported behavior. `aws-chunked` request bodies are decoded for object and part uploads as of M10 compatibility expansion, but per-chunk SigV4 signature verification is not yet implemented.
+Virtual-host addressing is a detection/reporting item, not supported behavior. `aws-chunked` request bodies are decoded for object and part uploads as of M10 compatibility expansion, and signed chunked payloads now verify each chunk signature before data is committed.
 
 ## Verification command
 
@@ -48,7 +48,7 @@ Each Core 5 row exercises:
 | Behavior | M6 result |
 |----------|-----------|
 | Virtual-host addressing | Detection tests run where practical. Required support remains path-style only. Local Docker DNS and the path-style router mean virtual-host results are recorded but do not gate the build. |
-| Streaming SigV4 / `aws-chunked` | Core 5 contract rows use file, bytes, or buffer bodies that do not require aws-chunked streaming. M10 added aws-chunked body decoding after MinIO `mc` exposed it as required for the extended matrix. |
+| Streaming SigV4 / `aws-chunked` | Core 5 contract rows use file, bytes, or buffer bodies that do not require aws-chunked streaming. M10 added aws-chunked body decoding after MinIO `mc` exposed it as required for the extended matrix; M12 adds per-chunk signature verification for signed aws-chunked bodies. |
 
 ## Extended client results
 
@@ -65,8 +65,8 @@ Extended detections:
 
 | Behavior | M10 result |
 |----------|------------|
-| `aws-chunked` streaming SigV4 | `mc` sends `STREAMING-AWS4-HMAC-SHA256-PAYLOAD`; Silofs decodes aws-chunked request bodies for object and part uploads. Per-chunk signature verification remains a documented limitation. |
-| DeleteObjects | `mc rm` and `s5cmd rm s3://bucket/*` use S3 DeleteObjects. Silofs still does not implement DeleteObjects. |
+| `aws-chunked` streaming SigV4 | `mc` sends `STREAMING-AWS4-HMAC-SHA256-PAYLOAD`; Silofs decodes aws-chunked request bodies for object and part uploads and verifies signed chunks. |
+| DeleteObjects | `mc rm --recursive` and `s5cmd rm s3://bucket/*` use S3 DeleteObjects. Silofs supports the batch delete API for those cleanup workflows. |
 | `s5cmd` bucket listing | `s5cmd ls s3://` is not supported by the pinned CLI; bucket creation and object workflows are verified instead. |
 | `s5cmd` wildcard listing | Basic prefix listing is gated; wildcard output shape is detection-only. |
 | `rclone` missing object errors | Some missing-key workflows are smoothed into empty output by rclone; raw S3-shaped error assertions remain covered by SDK rows. |
@@ -81,10 +81,10 @@ Extended detections:
 
 - `PutObject` and `UploadPart` decode aws-chunked request bodies before blob ingestion when `x-amz-content-sha256` is `STREAMING-AWS4-HMAC-SHA256-PAYLOAD` or `STREAMING-UNSIGNED-PAYLOAD-TRAILER`.
 - Decoded content length is taken from `x-amz-decoded-content-length`, while the encoded HTTP `Content-Length` is treated as a wire framing length.
+- Signed aws-chunked bodies verify every chunk signature against the SigV4 seed signature before data is committed.
+- `DeleteObjects` is implemented for batch delete cleanup used by the extended CLI clients.
 
 ## Known gaps after M10 compatibility expansion
 
 - No virtual-host addressing support.
-- `aws-chunked` bodies are decoded, but per-chunk SigV4 signatures are not verified yet.
-- No DeleteObjects API.
-- No ACLs, IAM policy engine, object versioning, lifecycle rules, replication, clustering, erasure coding, or server-side encryption.
+- No ACLs, IAM policy engine, object versioning, lifecycle rules, replication, clustering, erasure coding, SSE-C, or SSE-KMS. Local SSE-S3 encryption is supported by M8.5.

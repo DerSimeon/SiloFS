@@ -41,8 +41,8 @@ import software.amazon.awssdk.services.s3.model.UploadPartRequest
 import software.amazon.awssdk.services.s3.presigner.S3Presigner
 import software.amazon.awssdk.services.s3.presigner.model.GetObjectPresignRequest
 import software.amazon.awssdk.services.s3.presigner.model.PutObjectPresignRequest
-import java.net.URI
 import java.net.HttpURLConnection
+import java.net.URI
 import java.nio.file.Files
 import java.nio.file.Path
 import java.security.MessageDigest
@@ -54,10 +54,11 @@ import java.util.UUID
 class M6CompatibilityTest {
     private val log = LoggerFactory.getLogger(M6CompatibilityTest::class.java)
 
-    private val pg: PostgreSQLContainer<*> = PostgreSQLContainer("postgres:16-alpine")
-        .withDatabaseName("s3compat")
-        .withUsername("test")
-        .withPassword("test")
+    private val pg: PostgreSQLContainer<*> =
+        PostgreSQLContainer("postgres:16-alpine")
+            .withDatabaseName("s3compat")
+            .withUsername("test")
+            .withPassword("test")
 
     private lateinit var dataDir: Path
     private lateinit var database: Database
@@ -74,29 +75,38 @@ class M6CompatibilityTest {
         database.withConnection { conn ->
             repo.upsertAccessKey(conn, ACCESS_KEY, SECRET_KEY, "compatibility test key")
         }
-        val config = ServerConfig(
-            bindHost = "127.0.0.1",
-            bindPort = 0,
-            region = REGION,
-            dataDir = dataDir,
-            database = database,
-            blobStore = FsBlobStore(dataDir),
-            repository = repo,
-            credentialProvider = StaticCredentialProvider.single(ACCESS_KEY, SECRET_KEY),
-            recoveryConfig = RecoveryConfig(
-                tempMaxAgeSeconds = 1,
-                multipartMaxAgeSeconds = 1,
-                sweepIntervalSeconds = 1,
-                blobSweepIntervalSeconds = 1,
-                enabled = false,
-            ),
-        )
+        val config =
+            ServerConfig(
+                bindHost = "127.0.0.1",
+                bindPort = 0,
+                region = REGION,
+                dataDir = dataDir,
+                database = database,
+                blobStore = FsBlobStore(dataDir),
+                repository = repo,
+                credentialProvider = StaticCredentialProvider.single(ACCESS_KEY, SECRET_KEY),
+                recoveryConfig =
+                    RecoveryConfig(
+                        tempMaxAgeSeconds = 1,
+                        multipartMaxAgeSeconds = 1,
+                        sweepIntervalSeconds = 1,
+                        blobSweepIntervalSeconds = 1,
+                        enabled = false,
+                    ),
+            )
 
-        server = embeddedServer(Netty, host = "127.0.0.1", port = 0) {
-            s3Module(config)
-        }
+        server =
+            embeddedServer(Netty, host = "127.0.0.1", port = 0) {
+                s3Module(config)
+            }
         server.start(wait = false)
-        val port = runBlocking { server.engine.resolvedConnectors().first().port }
+        val port =
+            runBlocking {
+                server.engine
+                    .resolvedConnectors()
+                    .first()
+                    .port
+            }
         endpoint = "http://127.0.0.1:$port"
         Testcontainers.exposeHostPorts(port)
         containerEndpoint = "http://host.testcontainers.internal:$port"
@@ -123,7 +133,8 @@ class M6CompatibilityTest {
             val payload = "hello from java".toByteArray()
             val checksum = Base64.getEncoder().encodeToString(MessageDigest.getInstance("SHA-256").digest(payload))
             s3.putObject(
-                PutObjectRequest.builder()
+                PutObjectRequest
+                    .builder()
                     .bucket(bucket)
                     .key("objects/hello.txt")
                     .contentType("text/plain")
@@ -139,7 +150,11 @@ class M6CompatibilityTest {
             assertArrayEquals(payload, s3.getObjectAsBytes { it.bucket(bucket).key("objects/hello.txt") }.asByteArray())
 
             s3.putObject(
-                PutObjectRequest.builder().bucket(bucket).key("objects/range.bin").build(),
+                PutObjectRequest
+                    .builder()
+                    .bucket(bucket)
+                    .key("objects/range.bin")
+                    .build(),
                 RequestBody.fromBytes(ByteArray(256) { it.toByte() }),
             )
             assertArrayEquals(
@@ -149,7 +164,11 @@ class M6CompatibilityTest {
 
             listOf("prefix/a.txt", "prefix/b.txt", "prefix/nested/c.txt", "weird space 日本.txt").forEachIndexed { index, key ->
                 s3.putObject(
-                    PutObjectRequest.builder().bucket(bucket).key(key).build(),
+                    PutObjectRequest
+                        .builder()
+                        .bucket(bucket)
+                        .key(key)
+                        .build(),
                     RequestBody.fromBytes("v$index".toByteArray()),
                 )
             }
@@ -158,7 +177,8 @@ class M6CompatibilityTest {
             assertTrue(listed.commonPrefixes().any { it.prefix() == "prefix/nested/" })
 
             s3.copyObject(
-                CopyObjectRequest.builder()
+                CopyObjectRequest
+                    .builder()
                     .sourceBucket(bucket)
                     .sourceKey("objects/hello.txt")
                     .destinationBucket(bucket)
@@ -169,44 +189,59 @@ class M6CompatibilityTest {
 
             val multipartPayload = ByteArray(PART_SIZE) { 0x41 }
             val init = s3.createMultipartUpload { it.bucket(bucket).key("multipart.bin") }
-            val part = s3.uploadPart(
-                UploadPartRequest.builder()
-                    .bucket(bucket)
-                    .key("multipart.bin")
-                    .uploadId(init.uploadId())
-                    .partNumber(1)
-                    .contentLength(multipartPayload.size.toLong())
-                    .build(),
-                RequestBody.fromBytes(multipartPayload),
-            )
+            val part =
+                s3.uploadPart(
+                    UploadPartRequest
+                        .builder()
+                        .bucket(bucket)
+                        .key("multipart.bin")
+                        .uploadId(init.uploadId())
+                        .partNumber(1)
+                        .contentLength(multipartPayload.size.toLong())
+                        .build(),
+                    RequestBody.fromBytes(multipartPayload),
+                )
             assertEquals(1, s3.listParts { it.bucket(bucket).key("multipart.bin").uploadId(init.uploadId()) }.parts().size)
             assertEquals(1, s3.listMultipartUploads { it.bucket(bucket) }.uploads().size)
             s3.completeMultipartUpload {
-                it.bucket(bucket)
+                it
+                    .bucket(bucket)
                     .key("multipart.bin")
                     .uploadId(init.uploadId())
                     .multipartUpload(
-                        CompletedMultipartUpload.builder()
-                            .parts(CompletedPart.builder().partNumber(1).eTag(part.eTag()).build())
-                            .build(),
+                        CompletedMultipartUpload
+                            .builder()
+                            .parts(
+                                CompletedPart
+                                    .builder()
+                                    .partNumber(1)
+                                    .eTag(part.eTag())
+                                    .build(),
+                            ).build(),
                     )
             }
             assertEquals(PART_SIZE.toLong(), s3.headObject { it.bucket(bucket).key("multipart.bin") }.contentLength())
 
             s3.putObject(
-                PutObjectRequest.builder().bucket(bucket).key("copy-source.bin").build(),
+                PutObjectRequest
+                    .builder()
+                    .bucket(bucket)
+                    .key("copy-source.bin")
+                    .build(),
                 RequestBody.fromBytes(multipartPayload),
             )
             val copyInit = s3.createMultipartUpload { it.bucket(bucket).key("copy-dest.bin") }
-            val copyPart = s3.uploadPartCopy(
-                UploadPartCopyRequest.builder()
-                    .bucket(bucket)
-                    .key("copy-dest.bin")
-                    .uploadId(copyInit.uploadId())
-                    .partNumber(1)
-                    .copySource("$bucket/copy-source.bin")
-                    .build(),
-            )
+            val copyPart =
+                s3.uploadPartCopy(
+                    UploadPartCopyRequest
+                        .builder()
+                        .bucket(bucket)
+                        .key("copy-dest.bin")
+                        .uploadId(copyInit.uploadId())
+                        .partNumber(1)
+                        .copySource("$bucket/copy-source.bin")
+                        .build(),
+                )
             s3.abortMultipartUpload { it.bucket(bucket).key("copy-dest.bin").uploadId(copyInit.uploadId()) }
             assertTrue(copyPart.copyPartResult().eTag().isNotBlank())
 
@@ -214,33 +249,43 @@ class M6CompatibilityTest {
             s3.abortMultipartUpload { it.bucket(bucket).key("abort.bin").uploadId(abortInit.uploadId()) }
 
             newJavaPresigner().use { presigner ->
-                val getUrl = presigner.presignGetObject(
-                    GetObjectPresignRequest.builder()
-                        .signatureDuration(Duration.ofMinutes(5))
-                        .getObjectRequest { it.bucket(bucket).key("objects/hello.txt") }
-                        .build(),
-                ).url()
+                val getUrl =
+                    presigner
+                        .presignGetObject(
+                            GetObjectPresignRequest
+                                .builder()
+                                .signatureDuration(Duration.ofMinutes(5))
+                                .getObjectRequest { it.bucket(bucket).key("objects/hello.txt") }
+                                .build(),
+                        ).url()
                 assertArrayEquals(payload, getUrl.openStream().readBytes())
 
-                val putUrl = presigner.presignPutObject(
-                    PutObjectPresignRequest.builder()
-                        .signatureDuration(Duration.ofMinutes(5))
-                        .putObjectRequest { it.bucket(bucket).key("presigned-put.txt") }
-                        .build(),
-                ).url()
+                val putUrl =
+                    presigner
+                        .presignPutObject(
+                            PutObjectPresignRequest
+                                .builder()
+                                .signatureDuration(Duration.ofMinutes(5))
+                                .putObjectRequest { it.bucket(bucket).key("presigned-put.txt") }
+                                .build(),
+                        ).url()
                 (putUrl.openConnection() as HttpURLConnection).apply {
                     requestMethod = "PUT"
                     doOutput = true
                     outputStream.use { it.write("presigned".toByteArray()) }
                     getInputStream().close()
                 }
-                assertArrayEquals("presigned".toByteArray(), s3.getObjectAsBytes { it.bucket(bucket).key("presigned-put.txt") }.asByteArray())
+                assertArrayEquals(
+                    "presigned".toByteArray(),
+                    s3.getObjectAsBytes { it.bucket(bucket).key("presigned-put.txt") }.asByteArray(),
+                )
             }
 
             s3.deleteObject { it.bucket(bucket).key("objects/hello.txt") }
-            val missing = assertThrows<NoSuchKeyException> {
-                s3.headObject { it.bucket(bucket).key("objects/hello.txt") }
-            }
+            val missing =
+                assertThrows<NoSuchKeyException> {
+                    s3.headObject { it.bucket(bucket).key("objects/hello.txt") }
+                }
             assertEquals(404, missing.statusCode())
         }
     }
@@ -272,15 +317,20 @@ class M6CompatibilityTest {
         runClient("go-v2-detect", imageFor("go"), mode = "detect")
     }
 
-    private fun runClient(name: String, image: ImageFromDockerfile, mode: String = "contract") {
-        val container = CompatibilityContainer(image)
-            .withEnv("S3_ENDPOINT", containerEndpoint)
-            .withEnv("AWS_ACCESS_KEY_ID", ACCESS_KEY)
-            .withEnv("AWS_SECRET_ACCESS_KEY", SECRET_KEY)
-            .withEnv("AWS_DEFAULT_REGION", REGION)
-            .withEnv("COMPAT_MODE", mode)
-            .withEnv("COMPAT_CLIENT", name)
-            .withStartupCheckStrategy(OneShotStartupCheckStrategy().withTimeout(Duration.ofMinutes(10)))
+    private fun runClient(
+        name: String,
+        image: ImageFromDockerfile,
+        mode: String = "contract",
+    ) {
+        val container =
+            CompatibilityContainer(image)
+                .withEnv("S3_ENDPOINT", containerEndpoint)
+                .withEnv("AWS_ACCESS_KEY_ID", ACCESS_KEY)
+                .withEnv("AWS_SECRET_ACCESS_KEY", SECRET_KEY)
+                .withEnv("AWS_DEFAULT_REGION", REGION)
+                .withEnv("COMPAT_MODE", mode)
+                .withEnv("COMPAT_CLIENT", name)
+                .withStartupCheckStrategy(OneShotStartupCheckStrategy().withTimeout(Duration.ofMinutes(10)))
         container.use {
             try {
                 container.start()
@@ -298,29 +348,30 @@ class M6CompatibilityTest {
             .withFileFromPath(".", Path.of("src/test/docker/$name").toAbsolutePath())
 
     private fun newJavaClient(): S3Client =
-        S3Client.builder()
+        S3Client
+            .builder()
             .region(Region.of(REGION))
             .credentialsProvider(StaticCredentialsProvider.create(AwsBasicCredentials.create(ACCESS_KEY, SECRET_KEY)))
             .endpointOverride(URI.create(endpoint))
             .serviceConfiguration(
-                S3Configuration.builder()
+                S3Configuration
+                    .builder()
                     .pathStyleAccessEnabled(true)
                     .chunkedEncodingEnabled(false)
                     .build(),
-            )
-            .httpClient(ApacheHttpClient.builder().build())
+            ).httpClient(ApacheHttpClient.builder().build())
             .build()
 
     private fun newJavaPresigner(): S3Presigner =
-        S3Presigner.builder()
+        S3Presigner
+            .builder()
             .region(Region.of(REGION))
             .credentialsProvider(StaticCredentialsProvider.create(AwsBasicCredentials.create(ACCESS_KEY, SECRET_KEY)))
             .endpointOverride(URI.create(endpoint))
             .serviceConfiguration(S3Configuration.builder().pathStyleAccessEnabled(true).build())
             .build()
 
-    private fun newBucket(client: String): String =
-        "m6-$client-${UUID.randomUUID().toString().take(8).lowercase()}"
+    private fun newBucket(client: String): String = "m6-$client-${UUID.randomUUID().toString().take(8).lowercase()}"
 
     companion object {
         private const val ACCESS_KEY = "AKIAIOSFODNN7EXAMPLE"

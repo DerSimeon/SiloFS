@@ -59,7 +59,9 @@ case "$(s5 head "s3://$BUCKET/multipart.bin")" in
   *) echo "multipart size missing from s5cmd head" >&2; exit 1 ;;
 esac
 
-echo "DETECTION s5cmd rm-rb=wildcard-delete-uses-deleteobjects-unsupported"
+s5 rm "s3://$BUCKET/*" >/dev/null
+s5 rb "s3://$BUCKET" >/dev/null
+echo "DETECTION s5cmd rm-rb=deleteobjects-supported"
 
 echo "DETECTION s5cmd virtual-host=not-run path-style-required-configured"
 echo "DETECTION s5cmd streaming-sigv4=not-required-for-file-body"
