@@ -193,6 +193,17 @@ silofs/
 
 Coverage reports are written to `*/build/reports/jacoco/test/html/index.html`.
 
+Standalone CLI:
+
+```bash
+cd cli
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o silofs .
+./silofs version
+./silofs --endpoint http://127.0.0.1:8080 mb s3://photos
+./silofs cp ./image.jpg s3://photos/image.jpg
+./silofs admin inspect buckets --db-url jdbc:postgresql://localhost:5432/silofs
+```
+
 ## Backup and restore
 
 M8 backup support is offline/quiesced. Stop silofs or block writes before
@@ -279,6 +290,7 @@ The same contract applies to `UploadPart` and `CompleteMultipartUpload`.
 See [docs/COMPATIBILITY_M6.md](docs/COMPATIBILITY_M6.md) for the tested client matrix and [docs/MILESTONES.md](docs/MILESTONES.md) for the full M7-M9 roadmap.
 The bounded production-candidate sign-off is documented in
 [docs/PRODUCTION_READINESS_M9.md](docs/PRODUCTION_READINESS_M9.md).
+The standalone CLI is documented in [docs/CLI_M10.md](docs/CLI_M10.md).
 
 ## Architecture
 

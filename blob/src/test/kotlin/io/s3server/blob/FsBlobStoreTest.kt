@@ -16,6 +16,7 @@ import java.io.ByteArrayOutputStream
 import java.nio.file.Files
 import java.nio.file.Path
 import java.security.MessageDigest
+import java.util.concurrent.Executors
 
 class FsBlobStoreTest {
     @TempDir
@@ -51,6 +52,26 @@ class FsBlobStoreTest {
         assertEquals(payload.size.toLong(), n)
         val stored = w.commit()
         assertArrayEquals(payload, Files.readAllBytes(stored.blobPath))
+    }
+
+    @Test
+    fun `concurrent commits of identical content are idempotent`() {
+        val store = newStore()
+        val payload = ByteArray(4096) { (it % 251).toByte() }
+
+        Executors.newFixedThreadPool(16).use { pool ->
+            val writes = (0 until 128).map {
+                pool.submit<StoredBlob> {
+                    store.writeFromBytes(payload)
+                }
+            }
+            val stored = writes.map { it.get() }
+            assertEquals(1, stored.map { it.blobPath }.distinct().size)
+            stored.forEach {
+                assertEquals(payload.size.toLong(), it.sizeBytes)
+                assertArrayEquals(payload, Files.readAllBytes(it.blobPath))
+            }
+        }
     }
 
     @Test

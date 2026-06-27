@@ -649,7 +649,7 @@ Exit criteria:
 
 ## Milestone 10 — standalone CLI
 
-Status: in progress. The Docker-backed compatibility expansion now covers AWS SDK Kotlin, MinIO `mc`, `rclone`, and `s5cmd`. The compatibility work added aws-chunked request-body decoding required by `mc`; per-chunk signature verification, DeleteObjects, and the standalone `silofs` CLI remain open M10 work.
+Status: complete for the M10 scope. The Docker-backed compatibility expansion covers AWS SDK Kotlin, MinIO `mc`, `rclone`, and `s5cmd`. The compatibility work added aws-chunked request-body decoding required by `mc`. A standalone Go `silofs` CLI now provides S3 client workflows and local PostgreSQL/blob-directory admin workflows. Per-chunk SigV4 verification and DeleteObjects remain documented compatibility gaps, not M10 blockers.
 
 Provide a separate `silofs` operator/client CLI that can be built into an easy-to-deploy Linux binary, similar in spirit to `mc`, instead of requiring operators to invoke the server jar for admin workflows.
 

@@ -2,10 +2,12 @@ package app.silofs.blob
 
 import app.silofs.common.ByteRange
 import java.io.InputStream
+import java.io.IOException
 import java.io.OutputStream
 import java.nio.ByteBuffer
 import java.nio.channels.FileChannel
 import java.nio.file.Files
+import java.nio.file.FileAlreadyExistsException
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import java.nio.file.StandardOpenOption
@@ -409,8 +411,19 @@ class FsBlobWrite(
         store.ensureParentsFor(hex)
         val target = store.pathFor(hex)
 
+        if (Files.exists(target)) return useExistingTarget(target, hex)
+
         val (publishPath, encryptionMetadata) = store.encryptTempForPublish(tmpPath, hex, size)
-        Files.move(publishPath, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+        try {
+            Files.move(publishPath, target, StandardCopyOption.ATOMIC_MOVE)
+        } catch (e: FileAlreadyExistsException) {
+            if (publishPath != tmpPath) runCatching { Files.deleteIfExists(publishPath) }
+            return useExistingTarget(target, hex)
+        } catch (e: IOException) {
+            if (!Files.exists(target)) throw e
+            if (publishPath != tmpPath) runCatching { Files.deleteIfExists(publishPath) }
+            return useExistingTarget(target, hex)
+        }
         store.fsyncDirectory(target.parent)
 
         committed = true
@@ -424,6 +437,22 @@ class FsBlobWrite(
             encryptionMode = encryptionMetadata?.mode,
             encryptionKeyId = encryptionMetadata?.keyId,
             encryptionNonce = encryptionMetadata?.nonce,
+        )
+    }
+
+    private fun useExistingTarget(target: Path, hex: String): StoredBlob {
+        val existingEncryptionMetadata = ObjectEncryption.metadataFromEncryptedBlob(target)
+        committed = true
+        runCatching { channel.close() }
+        runCatching { Files.deleteIfExists(tmpPath) }
+        return StoredBlob(
+            blobPath = target,
+            sha256Hex = hex,
+            md5 = md5Digest.digest(),
+            sizeBytes = size,
+            encryptionMode = existingEncryptionMetadata?.mode,
+            encryptionKeyId = existingEncryptionMetadata?.keyId,
+            encryptionNonce = existingEncryptionMetadata?.nonce,
         )
     }
 

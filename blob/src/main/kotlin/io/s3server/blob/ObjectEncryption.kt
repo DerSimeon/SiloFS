@@ -97,7 +97,10 @@ class ObjectEncryption(
         val keyIdBytes: ByteArray,
         val plaintextSize: Long,
         val sha256Bytes: ByteArray,
-    )
+    ) {
+        val keyId: String
+            get() = keyIdBytes.toString(Charsets.UTF_8)
+    }
 
     companion object {
         const val SSE_S3_MODE = "SSE-S3"
@@ -113,6 +116,14 @@ class ObjectEncryption(
                 val buf = ByteBuffer.allocate(MAGIC.size)
                 if (ch.read(buf) != MAGIC.size) return false
                 return buf.array().contentEquals(MAGIC)
+            }
+        }
+
+        fun metadataFromEncryptedBlob(path: Path): BlobEncryptionMetadata? {
+            if (!isEncryptedBlob(path)) return null
+            Files.newInputStream(path).use { input ->
+                val header = readHeader(input)
+                return BlobEncryptionMetadata(SSE_S3_MODE, header.keyId, header.nonce)
             }
         }
 
