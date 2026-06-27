@@ -4,6 +4,7 @@ import app.silofs.common.BucketInfo
 import app.silofs.common.ListObject
 import app.silofs.common.ListObjectsV2Result
 import app.silofs.common.ObjectMetadata
+import app.silofs.common.ObjectVersion
 import java.sql.Connection
 import java.sql.PreparedStatement
 import java.sql.ResultSet
@@ -54,6 +55,38 @@ interface MetadataRepository {
         name: String,
     ): Long
 
+    fun grantBucketPermission(
+        conn: Connection,
+        accessKeyId: String,
+        bucket: String,
+        permission: String,
+    )
+
+    fun revokeBucketPermission(
+        conn: Connection,
+        accessKeyId: String,
+        bucket: String,
+        permission: String,
+    ): Boolean
+
+    fun listBucketGrants(
+        conn: Connection,
+        accessKeyId: String? = null,
+        bucket: String? = null,
+    ): List<BucketGrantRecord>
+
+    fun hasBucketPermission(
+        conn: Connection,
+        accessKeyId: String,
+        bucket: String,
+        permission: String,
+    ): Boolean
+
+    fun listBucketsForAccessKey(
+        conn: Connection,
+        accessKeyId: String,
+    ): List<BucketInfo>
+
     // Objects
     fun putObject(
         conn: Connection,
@@ -66,11 +99,87 @@ interface MetadataRepository {
         key: String,
     ): ObjectMetadata?
 
+    fun getObjectVersion(
+        conn: Connection,
+        bucket: String,
+        key: String,
+        versionId: String,
+    ): ObjectMetadata?
+
     fun deleteObject(
         conn: Connection,
         bucket: String,
         key: String,
     ): Boolean
+
+    fun deleteObjectVersion(
+        conn: Connection,
+        bucket: String,
+        key: String,
+        versionId: String,
+        now: Instant = Instant.now(),
+    ): Boolean
+
+    fun createDeleteMarker(
+        conn: Connection,
+        bucket: String,
+        key: String,
+        versionId: String,
+    ): ObjectMetadata
+
+    fun listObjectVersions(
+        conn: Connection,
+        bucket: String,
+        prefix: String? = null,
+    ): List<ObjectVersion>
+
+    fun setBucketVersioning(
+        conn: Connection,
+        bucket: String,
+        status: String,
+    ): Boolean
+
+    fun setBucketObjectLock(
+        conn: Connection,
+        bucket: String,
+        enabled: Boolean,
+        defaultRetentionMode: String?,
+        defaultRetentionDays: Int?,
+    ): Boolean
+
+    fun putRetention(
+        conn: Connection,
+        bucket: String,
+        key: String,
+        versionId: String,
+        mode: String,
+        retainUntil: Instant,
+    ): Boolean
+
+    fun putLegalHold(
+        conn: Connection,
+        bucket: String,
+        key: String,
+        versionId: String,
+        enabled: Boolean,
+    ): Boolean
+
+    fun replaceLifecycleRules(
+        conn: Connection,
+        bucket: String,
+        rules: List<LifecycleRuleRecord>,
+    )
+
+    fun listLifecycleRules(
+        conn: Connection,
+        bucket: String,
+    ): List<LifecycleRuleRecord>
+
+    fun expireLifecycleObjects(
+        conn: Connection,
+        batchSize: Int,
+        now: Instant = Instant.now(),
+    ): Int
 
     /**
      * M2.1: extended listObjects with [prefix], [delimiter], and [encodingType].
@@ -340,6 +449,23 @@ data class AuditEventRecord(
     val detailJson: String = "{}",
 )
 
+data class BucketGrantRecord(
+    val accessKeyId: String,
+    val bucket: String,
+    val permission: String,
+    val createdAt: Instant? = null,
+)
+
+data class LifecycleRuleRecord(
+    val bucket: String,
+    val ruleId: String,
+    val enabled: Boolean,
+    val prefix: String?,
+    val currentVersionExpirationDays: Int?,
+    val noncurrentVersionExpirationDays: Int?,
+    val abortIncompleteMultipartDays: Int?,
+)
+
 /** Full info about a multipart upload, used by CreateMultipartUpload and ListMultipartUploads. */
 data class MultipartUploadInfo(
     val uploadId: String,
@@ -413,7 +539,11 @@ class JdbcMetadataRepository : MetadataRepository {
     ): BucketInfo? =
         conn
             .prepareStatement(
-                "SELECT name, region, owner_id, created_at FROM buckets WHERE name = ? AND deleted_at IS NULL",
+                """
+                SELECT name, region, owner_id, created_at, versioning_status, object_lock_enabled,
+                       default_retention_mode, default_retention_days
+                FROM buckets WHERE name = ? AND deleted_at IS NULL
+                """.trimIndent(),
             ).use { ps ->
                 ps.setString(1, name)
                 ps.executeQuery().use { rs ->
@@ -425,6 +555,10 @@ class JdbcMetadataRepository : MetadataRepository {
                             region = rs.getString("region"),
                             ownerId = rs.getString("owner_id"),
                             createdAt = rs.getTimestamp("created_at").toInstant(),
+                            versioningStatus = rs.getString("versioning_status"),
+                            objectLockEnabled = rs.getBoolean("object_lock_enabled"),
+                            defaultRetentionMode = rs.getString("default_retention_mode"),
+                            defaultRetentionDays = rs.getObject("default_retention_days") as Int?,
                         )
                     }
                 }
@@ -433,7 +567,11 @@ class JdbcMetadataRepository : MetadataRepository {
     override fun listBuckets(conn: Connection): List<BucketInfo> =
         conn
             .prepareStatement(
-                "SELECT name, region, owner_id, created_at FROM buckets WHERE deleted_at IS NULL ORDER BY created_at",
+                """
+                SELECT name, region, owner_id, created_at, versioning_status, object_lock_enabled,
+                       default_retention_mode, default_retention_days
+                FROM buckets WHERE deleted_at IS NULL ORDER BY created_at
+                """.trimIndent(),
             ).use { ps ->
                 ps.executeQuery().use { rs ->
                     val out = ArrayList<BucketInfo>()
@@ -444,11 +582,148 @@ class JdbcMetadataRepository : MetadataRepository {
                                 region = rs.getString("region"),
                                 ownerId = rs.getString("owner_id"),
                                 createdAt = rs.getTimestamp("created_at").toInstant(),
+                                versioningStatus = rs.getString("versioning_status"),
+                                objectLockEnabled = rs.getBoolean("object_lock_enabled"),
+                                defaultRetentionMode = rs.getString("default_retention_mode"),
+                                defaultRetentionDays = rs.getObject("default_retention_days") as Int?,
                             )
                     }
                     out
                 }
             }
+
+    override fun grantBucketPermission(
+        conn: Connection,
+        accessKeyId: String,
+        bucket: String,
+        permission: String,
+    ) {
+        conn
+            .prepareStatement(
+                """
+                INSERT INTO access_key_bucket_grants(access_key_id, bucket, permission)
+                VALUES (?, ?, ?)
+                ON CONFLICT DO NOTHING
+                """.trimIndent(),
+            ).use { ps ->
+                ps.setString(1, accessKeyId)
+                ps.setString(2, bucket)
+                ps.setString(3, permission.uppercase())
+                ps.executeUpdate()
+            }
+    }
+
+    override fun revokeBucketPermission(
+        conn: Connection,
+        accessKeyId: String,
+        bucket: String,
+        permission: String,
+    ): Boolean =
+        conn
+            .prepareStatement(
+                "DELETE FROM access_key_bucket_grants WHERE access_key_id = ? AND bucket = ? AND permission = ?",
+            ).use { ps ->
+                ps.setString(1, accessKeyId)
+                ps.setString(2, bucket)
+                ps.setString(3, permission.uppercase())
+                ps.executeUpdate() > 0
+            }
+
+    override fun listBucketGrants(
+        conn: Connection,
+        accessKeyId: String?,
+        bucket: String?,
+    ): List<BucketGrantRecord> {
+        val sql =
+            buildString {
+                append("SELECT access_key_id, bucket, permission, created_at FROM access_key_bucket_grants WHERE 1=1 ")
+                if (accessKeyId != null) append("AND access_key_id = ? ")
+                if (bucket != null) append("AND bucket = ? ")
+                append("ORDER BY access_key_id, bucket, permission")
+            }
+        return conn.prepareStatement(sql).use { ps ->
+            var i = 1
+            if (accessKeyId != null) ps.setString(i++, accessKeyId)
+            if (bucket != null) ps.setString(i++, bucket)
+            ps.executeQuery().use { rs ->
+                val out = ArrayList<BucketGrantRecord>()
+                while (rs.next()) {
+                    out +=
+                        BucketGrantRecord(
+                            accessKeyId = rs.getString("access_key_id"),
+                            bucket = rs.getString("bucket"),
+                            permission = rs.getString("permission"),
+                            createdAt = rs.getTimestamp("created_at").toInstant(),
+                        )
+                }
+                out
+            }
+        }
+    }
+
+    override fun hasBucketPermission(
+        conn: Connection,
+        accessKeyId: String,
+        bucket: String,
+        permission: String,
+    ): Boolean {
+        val allowed =
+            when (permission.uppercase()) {
+                "READ" -> listOf("READ", "ADMIN")
+                "WRITE" -> listOf("WRITE", "ADMIN")
+                "ADMIN" -> listOf("ADMIN")
+                else -> listOf(permission.uppercase())
+            }
+        val placeholders = allowed.joinToString(",") { "?" }
+        val sql =
+            """
+            SELECT 1 FROM access_key_bucket_grants
+            WHERE access_key_id = ? AND bucket IN (?, '*') AND permission IN ($placeholders)
+            LIMIT 1
+            """.trimIndent()
+        return conn.prepareStatement(sql).use { ps ->
+            ps.setString(1, accessKeyId)
+            ps.setString(2, bucket)
+            allowed.forEachIndexed { idx, value -> ps.setString(3 + idx, value) }
+            ps.executeQuery().use { it.next() }
+        }
+    }
+
+    override fun listBucketsForAccessKey(
+        conn: Connection,
+        accessKeyId: String,
+    ): List<BucketInfo> {
+        if (hasBucketPermission(conn, accessKeyId, "*", "ADMIN")) return listBuckets(conn)
+        val sql =
+            """
+            SELECT DISTINCT b.name, b.region, b.owner_id, b.created_at, b.versioning_status,
+                   b.object_lock_enabled, b.default_retention_mode, b.default_retention_days
+            FROM buckets b
+            JOIN access_key_bucket_grants g ON g.bucket = b.name
+            WHERE b.deleted_at IS NULL AND g.access_key_id = ?
+            ORDER BY b.created_at
+            """.trimIndent()
+        return conn.prepareStatement(sql).use { ps ->
+            ps.setString(1, accessKeyId)
+            ps.executeQuery().use { rs ->
+                val out = ArrayList<BucketInfo>()
+                while (rs.next()) {
+                    out +=
+                        BucketInfo(
+                            name = rs.getString("name"),
+                            region = rs.getString("region"),
+                            ownerId = rs.getString("owner_id"),
+                            createdAt = rs.getTimestamp("created_at").toInstant(),
+                            versioningStatus = rs.getString("versioning_status"),
+                            objectLockEnabled = rs.getBoolean("object_lock_enabled"),
+                            defaultRetentionMode = rs.getString("default_retention_mode"),
+                            defaultRetentionDays = rs.getObject("default_retention_days") as Int?,
+                        )
+                }
+                out
+            }
+        }
+    }
 
     /**
      * Soft-deletes the bucket row. The caller MUST first check
@@ -484,8 +759,16 @@ class JdbcMetadataRepository : MetadataRepository {
         conn: Connection,
         meta: ObjectMetadata,
     ): ObjectMetadata {
-        // Upsert on (bucket, object_key, version_id). For M1 version_id is always
-        // 'null', so this is effectively a single-row-per-key upsert.
+        if (meta.versionId != "null") {
+            conn
+                .prepareStatement(
+                    "UPDATE objects SET is_latest = FALSE WHERE bucket = ? AND object_key = ? AND deleted_at IS NULL",
+                ).use { ps ->
+                    ps.setString(1, meta.bucket)
+                    ps.setString(2, meta.key)
+                    ps.executeUpdate()
+                }
+        }
         val sql =
             """
             INSERT INTO objects(
@@ -494,8 +777,9 @@ class JdbcMetadataRepository : MetadataRepository {
                 content_disposition, expires, user_metadata, version_id, is_latest,
                 storage_class, created_at,
                 checksum_crc32, checksum_crc32c, checksum_sha1, checksum_sha256, checksum_type,
-                encryption_mode, encryption_key_id, encryption_nonce
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, TRUE, ?, now(), ?, ?, ?, ?, ?, ?, ?, ?)
+                encryption_mode, encryption_key_id, encryption_nonce,
+                is_delete_marker, retention_mode, retain_until, legal_hold
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, TRUE, ?, now(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT (bucket, object_key, version_id) DO UPDATE SET
                 blob_path = EXCLUDED.blob_path,
                 blob_sha256 = EXCLUDED.blob_sha256,
@@ -518,7 +802,12 @@ class JdbcMetadataRepository : MetadataRepository {
                 checksum_type = EXCLUDED.checksum_type,
                 encryption_mode = EXCLUDED.encryption_mode,
                 encryption_key_id = EXCLUDED.encryption_key_id,
-                encryption_nonce = EXCLUDED.encryption_nonce
+                encryption_nonce = EXCLUDED.encryption_nonce,
+                is_delete_marker = EXCLUDED.is_delete_marker,
+                retention_mode = EXCLUDED.retention_mode,
+                retain_until = EXCLUDED.retain_until,
+                legal_hold = EXCLUDED.legal_hold,
+                is_latest = TRUE
             """.trimIndent()
         conn.prepareStatement(sql).use { ps ->
             ps.applyObjectMeta(meta)
@@ -539,15 +828,46 @@ class JdbcMetadataRepository : MetadataRepository {
                    content_disposition, expires, user_metadata, version_id, storage_class,
                    created_at,
                    checksum_crc32, checksum_crc32c, checksum_sha1, checksum_sha256, checksum_type,
-                   encryption_mode, encryption_key_id, encryption_nonce
+                   encryption_mode, encryption_key_id, encryption_nonce,
+                   is_delete_marker, retention_mode, retain_until, legal_hold
             FROM objects
-            WHERE bucket = ? AND object_key = ? AND deleted_at IS NULL
+            WHERE bucket = ? AND object_key = ? AND deleted_at IS NULL AND is_latest = TRUE
+            ORDER BY created_at DESC
+            LIMIT 1
             """.trimIndent()
         return conn.prepareStatement(sql).use { ps ->
             ps.setString(1, bucket)
             ps.setString(2, key)
             ps.executeQuery().use { rs ->
-                if (!rs.next()) null else rs.toObjectMeta()
+                if (!rs.next() || rs.getBoolean("is_delete_marker")) null else rs.toObjectMeta()
+            }
+        }
+    }
+
+    override fun getObjectVersion(
+        conn: Connection,
+        bucket: String,
+        key: String,
+        versionId: String,
+    ): ObjectMetadata? {
+        val sql =
+            """
+            SELECT bucket, object_key, blob_path, blob_sha256, etag, size_bytes,
+                   content_type, content_encoding, content_language, cache_control,
+                   content_disposition, expires, user_metadata, version_id, storage_class,
+                   created_at,
+                   checksum_crc32, checksum_crc32c, checksum_sha1, checksum_sha256, checksum_type,
+                   encryption_mode, encryption_key_id, encryption_nonce,
+                   is_delete_marker, retention_mode, retain_until, legal_hold
+            FROM objects
+            WHERE bucket = ? AND object_key = ? AND version_id = ? AND deleted_at IS NULL
+            """.trimIndent()
+        return conn.prepareStatement(sql).use { ps ->
+            ps.setString(1, bucket)
+            ps.setString(2, key)
+            ps.setString(3, versionId)
+            ps.executeQuery().use { rs ->
+                if (!rs.next() || rs.getBoolean("is_delete_marker")) null else rs.toObjectMeta()
             }
         }
     }
@@ -556,16 +876,114 @@ class JdbcMetadataRepository : MetadataRepository {
         conn: Connection,
         bucket: String,
         key: String,
-    ): Boolean {
-        // Soft-delete keeps the row for the (future) versioning milestone.
-        return conn
+    ): Boolean =
+        conn
             .prepareStatement(
-                "UPDATE objects SET deleted_at = now() WHERE bucket = ? AND object_key = ? AND deleted_at IS NULL",
+                "UPDATE objects SET deleted_at = now(), is_latest = FALSE WHERE bucket = ? AND object_key = ? AND deleted_at IS NULL AND is_latest = TRUE",
             ).use { ps ->
                 ps.setString(1, bucket)
                 ps.setString(2, key)
                 ps.executeUpdate() > 0
             }
+
+    override fun deleteObjectVersion(
+        conn: Connection,
+        bucket: String,
+        key: String,
+        versionId: String,
+        now: Instant,
+    ): Boolean {
+        val existing = getObjectRow(conn, bucket, key, versionId) ?: return false
+        val retainUntil = existing.retainUntil
+        if (existing.legalHold || (retainUntil != null && retainUntil.isAfter(now))) {
+            return false
+        }
+        val wasLatest = isLatestObjectVersion(conn, bucket, key, versionId)
+        val deleted =
+            conn
+                .prepareStatement(
+                    "UPDATE objects SET deleted_at = now(), is_latest = FALSE WHERE bucket = ? AND object_key = ? AND version_id = ? AND deleted_at IS NULL",
+                ).use { ps ->
+                    ps.setString(1, bucket)
+                    ps.setString(2, key)
+                    ps.setString(3, versionId)
+                    ps.executeUpdate() > 0
+                }
+        if (deleted && wasLatest) promoteNewestVersion(conn, bucket, key)
+        return deleted
+    }
+
+    override fun createDeleteMarker(
+        conn: Connection,
+        bucket: String,
+        key: String,
+        versionId: String,
+    ): ObjectMetadata {
+        conn
+            .prepareStatement(
+                "UPDATE objects SET is_latest = FALSE WHERE bucket = ? AND object_key = ? AND deleted_at IS NULL",
+            ).use { ps ->
+                ps.setString(1, bucket)
+                ps.setString(2, key)
+                ps.executeUpdate()
+            }
+        val meta =
+            ObjectMetadata(
+                bucket = bucket,
+                key = key,
+                blobPath = "",
+                blobSha256Hex = "00".repeat(32),
+                etag = "",
+                sizeBytes = 0,
+                contentType = "application/octet-stream",
+                contentEncoding = null,
+                contentLanguage = null,
+                cacheControl = null,
+                contentDisposition = null,
+                expires = null,
+                userMetadata = emptyMap(),
+                versionId = versionId,
+                storageClass = "STANDARD",
+                createdAt = Instant.now(),
+                isDeleteMarker = true,
+            )
+        putObject(conn, meta)
+        return meta
+    }
+
+    override fun listObjectVersions(
+        conn: Connection,
+        bucket: String,
+        prefix: String?,
+    ): List<ObjectVersion> {
+        val sql =
+            buildString {
+                append("SELECT object_key, version_id, is_latest, is_delete_marker, etag, size_bytes, created_at, storage_class ")
+                append("FROM objects WHERE bucket = ? AND deleted_at IS NULL ")
+                if (prefix != null) append("AND object_key LIKE ? ESCAPE '\\' ")
+                append("ORDER BY object_key ASC, created_at DESC")
+            }
+        return conn.prepareStatement(sql).use { ps ->
+            ps.setString(1, bucket)
+            if (prefix != null) ps.setString(2, likeEscape(prefix))
+            ps.executeQuery().use { rs ->
+                val out = ArrayList<ObjectVersion>()
+                while (rs.next()) {
+                    out +=
+                        ObjectVersion(
+                            key = rs.getString("object_key"),
+                            versionId = rs.getString("version_id"),
+                            isLatest = rs.getBoolean("is_latest"),
+                            isDeleteMarker = rs.getBoolean("is_delete_marker"),
+                            etag = rs.getString("etag"),
+                            sizeBytes = rs.getLong("size_bytes"),
+                            lastModified = rs.getTimestamp("created_at").toInstant(),
+                            storageClass = rs.getString("storage_class"),
+                        )
+                }
+                out
+            }
+        }
     }
 
     override fun listObjects(
@@ -600,7 +1018,7 @@ class JdbcMetadataRepository : MetadataRepository {
             buildString {
                 append("SELECT object_key, etag, size_bytes, created_at, storage_class ")
                 append("FROM objects ")
-                append("WHERE bucket = ? AND deleted_at IS NULL ")
+                append("WHERE bucket = ? AND deleted_at IS NULL AND is_latest = TRUE AND is_delete_marker = FALSE ")
                 if (prefix != null) append("AND object_key LIKE ? ESCAPE '\\' ")
                 if (startAfterKey != null) append("AND object_key > ? ")
                 append("ORDER BY object_key ASC ")
@@ -696,6 +1114,256 @@ class JdbcMetadataRepository : MetadataRepository {
             startAfter = startAfter,
             encodingType = encodingType,
         )
+    }
+
+    override fun setBucketVersioning(
+        conn: Connection,
+        bucket: String,
+        status: String,
+    ): Boolean =
+        conn
+            .prepareStatement("UPDATE buckets SET versioning_status = ? WHERE name = ? AND deleted_at IS NULL")
+            .use { ps ->
+                ps.setString(1, status.uppercase())
+                ps.setString(2, bucket)
+                ps.executeUpdate() > 0
+            }
+
+    override fun setBucketObjectLock(
+        conn: Connection,
+        bucket: String,
+        enabled: Boolean,
+        defaultRetentionMode: String?,
+        defaultRetentionDays: Int?,
+    ): Boolean =
+        conn
+            .prepareStatement(
+                """
+                UPDATE buckets SET object_lock_enabled = object_lock_enabled OR ?,
+                    default_retention_mode = ?, default_retention_days = ?
+                WHERE name = ? AND deleted_at IS NULL
+                """.trimIndent(),
+            ).use { ps ->
+                ps.setBoolean(1, enabled)
+                ps.setString(2, defaultRetentionMode)
+                setNullableInt(ps, 3, defaultRetentionDays)
+                ps.setString(4, bucket)
+                ps.executeUpdate() > 0
+            }
+
+    override fun putRetention(
+        conn: Connection,
+        bucket: String,
+        key: String,
+        versionId: String,
+        mode: String,
+        retainUntil: Instant,
+    ): Boolean =
+        conn
+            .prepareStatement(
+                """
+                UPDATE objects SET retention_mode = ?, retain_until = ?
+                WHERE bucket = ? AND object_key = ? AND version_id = ? AND deleted_at IS NULL AND is_delete_marker = FALSE
+                """.trimIndent(),
+            ).use { ps ->
+                ps.setString(1, mode.uppercase())
+                ps.setTimestamp(2, Timestamp.from(retainUntil))
+                ps.setString(3, bucket)
+                ps.setString(4, key)
+                ps.setString(5, versionId)
+                ps.executeUpdate() > 0
+            }
+
+    override fun putLegalHold(
+        conn: Connection,
+        bucket: String,
+        key: String,
+        versionId: String,
+        enabled: Boolean,
+    ): Boolean =
+        conn
+            .prepareStatement(
+                """
+                UPDATE objects SET legal_hold = ?
+                WHERE bucket = ? AND object_key = ? AND version_id = ? AND deleted_at IS NULL AND is_delete_marker = FALSE
+                """.trimIndent(),
+            ).use { ps ->
+                ps.setBoolean(1, enabled)
+                ps.setString(2, bucket)
+                ps.setString(3, key)
+                ps.setString(4, versionId)
+                ps.executeUpdate() > 0
+            }
+
+    override fun replaceLifecycleRules(
+        conn: Connection,
+        bucket: String,
+        rules: List<LifecycleRuleRecord>,
+    ) {
+        conn.prepareStatement("DELETE FROM bucket_lifecycle_rules WHERE bucket = ?").use { ps ->
+            ps.setString(1, bucket)
+            ps.executeUpdate()
+        }
+        conn
+            .prepareStatement(
+                """
+                INSERT INTO bucket_lifecycle_rules(
+                    bucket, rule_id, enabled, prefix, current_version_expiration_days,
+                    noncurrent_version_expiration_days, abort_incomplete_multipart_days, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, now())
+                """.trimIndent(),
+            ).use { ps ->
+                for (rule in rules) {
+                    ps.setString(1, bucket)
+                    ps.setString(2, rule.ruleId)
+                    ps.setBoolean(3, rule.enabled)
+                    ps.setString(4, rule.prefix)
+                    setNullableInt(ps, 5, rule.currentVersionExpirationDays)
+                    setNullableInt(ps, 6, rule.noncurrentVersionExpirationDays)
+                    setNullableInt(ps, 7, rule.abortIncompleteMultipartDays)
+                    ps.addBatch()
+                }
+                ps.executeBatch()
+            }
+    }
+
+    override fun listLifecycleRules(
+        conn: Connection,
+        bucket: String,
+    ): List<LifecycleRuleRecord> =
+        conn
+            .prepareStatement(
+                """
+                SELECT bucket, rule_id, enabled, prefix, current_version_expiration_days,
+                       noncurrent_version_expiration_days, abort_incomplete_multipart_days
+                FROM bucket_lifecycle_rules WHERE bucket = ? ORDER BY rule_id
+                """.trimIndent(),
+            ).use { ps ->
+                ps.setString(1, bucket)
+                ps.executeQuery().use { rs ->
+                    val out = ArrayList<LifecycleRuleRecord>()
+                    while (rs.next()) {
+                        out +=
+                            LifecycleRuleRecord(
+                                bucket = rs.getString("bucket"),
+                                ruleId = rs.getString("rule_id"),
+                                enabled = rs.getBoolean("enabled"),
+                                prefix = rs.getString("prefix"),
+                                currentVersionExpirationDays = rs.getObject("current_version_expiration_days") as Int?,
+                                noncurrentVersionExpirationDays = rs.getObject("noncurrent_version_expiration_days") as Int?,
+                                abortIncompleteMultipartDays = rs.getObject("abort_incomplete_multipart_days") as Int?,
+                            )
+                    }
+                    out
+                }
+            }
+
+    override fun expireLifecycleObjects(
+        conn: Connection,
+        batchSize: Int,
+        now: Instant,
+    ): Int {
+        val sql =
+            """
+            WITH candidates AS (
+                SELECT o.bucket, o.object_key, o.version_id
+                FROM objects o
+                JOIN bucket_lifecycle_rules r ON r.bucket = o.bucket AND r.enabled = TRUE
+                WHERE o.deleted_at IS NULL
+                  AND o.is_delete_marker = FALSE
+                  AND o.legal_hold = FALSE
+                  AND (o.retain_until IS NULL OR o.retain_until <= ?)
+                  AND (r.prefix IS NULL OR o.object_key LIKE r.prefix || '%' ESCAPE '\')
+                  AND (
+                    (o.is_latest = TRUE AND r.current_version_expiration_days IS NOT NULL
+                     AND o.created_at <= CAST(? AS TIMESTAMPTZ) - make_interval(days => r.current_version_expiration_days))
+                    OR
+                    (o.is_latest = FALSE AND r.noncurrent_version_expiration_days IS NOT NULL
+                     AND o.created_at <= CAST(? AS TIMESTAMPTZ) - make_interval(days => r.noncurrent_version_expiration_days))
+                  )
+                ORDER BY o.created_at
+                LIMIT ?
+            )
+            UPDATE objects o SET deleted_at = ?, is_latest = FALSE
+            FROM candidates c
+            WHERE o.bucket = c.bucket AND o.object_key = c.object_key AND o.version_id = c.version_id
+            """.trimIndent()
+        return conn.prepareStatement(sql).use { ps ->
+            val ts = Timestamp.from(now)
+            ps.setTimestamp(1, ts)
+            ps.setTimestamp(2, ts)
+            ps.setTimestamp(3, ts)
+            ps.setInt(4, batchSize)
+            ps.setTimestamp(5, ts)
+            ps.executeUpdate()
+        }
+    }
+
+    private fun getObjectRow(
+        conn: Connection,
+        bucket: String,
+        key: String,
+        versionId: String,
+    ): ObjectMetadata? =
+        conn
+            .prepareStatement(
+                """
+                SELECT bucket, object_key, blob_path, blob_sha256, etag, size_bytes,
+                       content_type, content_encoding, content_language, cache_control,
+                       content_disposition, expires, user_metadata, version_id, storage_class,
+                       created_at,
+                       checksum_crc32, checksum_crc32c, checksum_sha1, checksum_sha256, checksum_type,
+                       encryption_mode, encryption_key_id, encryption_nonce,
+                       is_delete_marker, retention_mode, retain_until, legal_hold
+                FROM objects
+                WHERE bucket = ? AND object_key = ? AND version_id = ? AND deleted_at IS NULL
+                """.trimIndent(),
+            ).use { ps ->
+                ps.setString(1, bucket)
+                ps.setString(2, key)
+                ps.setString(3, versionId)
+                ps.executeQuery().use { rs -> if (!rs.next()) null else rs.toObjectMeta() }
+            }
+
+    private fun isLatestObjectVersion(
+        conn: Connection,
+        bucket: String,
+        key: String,
+        versionId: String,
+    ): Boolean =
+        conn
+            .prepareStatement(
+                "SELECT is_latest FROM objects WHERE bucket = ? AND object_key = ? AND version_id = ? AND deleted_at IS NULL",
+            ).use { ps ->
+                ps.setString(1, bucket)
+                ps.setString(2, key)
+                ps.setString(3, versionId)
+                ps.executeQuery().use { rs -> rs.next() && rs.getBoolean("is_latest") }
+            }
+
+    private fun promoteNewestVersion(
+        conn: Connection,
+        bucket: String,
+        key: String,
+    ) {
+        conn
+            .prepareStatement(
+                """
+                UPDATE objects SET is_latest = TRUE
+                WHERE bucket = ? AND object_key = ? AND version_id = (
+                    SELECT version_id FROM objects
+                    WHERE bucket = ? AND object_key = ? AND deleted_at IS NULL
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                )
+                """.trimIndent(),
+            ).use { ps ->
+                ps.setString(1, bucket)
+                ps.setString(2, key)
+                ps.setString(3, bucket)
+                ps.setString(4, key)
+                ps.executeUpdate()
+            }
     }
 
     /**
@@ -1346,7 +2014,15 @@ private fun PreparedStatement.applyObjectMeta(meta: ObjectMetadata) {
     setString(i++, meta.checksumType)
     setString(i++, meta.encryptionMode)
     setString(i++, meta.encryptionKeyId)
-    setBytes(i, meta.encryptionNonce)
+    setBytes(i++, meta.encryptionNonce)
+    setBoolean(i++, meta.isDeleteMarker)
+    setString(i++, meta.retentionMode)
+    if (meta.retainUntil == null) {
+        setNull(i++, java.sql.Types.TIMESTAMP_WITH_TIMEZONE)
+    } else {
+        setTimestamp(i++, Timestamp.from(meta.retainUntil))
+    }
+    setBoolean(i, meta.legalHold)
 }
 
 private fun ResultSet.toObjectMeta(): ObjectMetadata {
@@ -1378,6 +2054,10 @@ private fun ResultSet.toObjectMeta(): ObjectMetadata {
         encryptionMode = getString("encryption_mode"),
         encryptionKeyId = getString("encryption_key_id"),
         encryptionNonce = getBytes("encryption_nonce"),
+        isDeleteMarker = getBoolean("is_delete_marker"),
+        retentionMode = getString("retention_mode"),
+        retainUntil = getTimestamp("retain_until")?.toInstant(),
+        legalHold = getBoolean("legal_hold"),
     )
 }
 
@@ -1431,6 +2111,18 @@ fun hexToBytes(hex: String): ByteArray {
 }
 
 fun bytesToHex(bytes: ByteArray): String = bytes.joinToString("") { "%02x".format(it) }
+
+private fun setNullableInt(
+    ps: PreparedStatement,
+    index: Int,
+    value: Int?,
+) {
+    if (value == null) {
+        ps.setNull(index, java.sql.Types.INTEGER)
+    } else {
+        ps.setInt(index, value)
+    }
+}
 
 fun Map<String, String>.toJson(): String {
     if (this.isEmpty()) return "{}"

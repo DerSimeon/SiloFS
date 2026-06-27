@@ -63,7 +63,10 @@ abstract class AbstractS3ServerTest {
         val db = Database.fromUrl(pg.jdbcUrl, pg.username, pg.password)
         database = db
         val repo = JdbcMetadataRepository()
-        db.withConnection { c -> repo.upsertAccessKey(c, ACCESS_KEY, SECRET_KEY, "test key") }
+        db.withConnection { c ->
+            repo.upsertAccessKey(c, ACCESS_KEY, SECRET_KEY, "test key")
+            repo.grantBucketPermission(c, ACCESS_KEY, "*", "ADMIN")
+        }
         val objectEncryptionConfig = objectEncryptionConfig()
         val blobStore = FsBlobStore(dataDir, objectEncryptionConfig.encryption)
         val securityConfig =

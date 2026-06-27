@@ -94,7 +94,7 @@ class BlobConsistencyChecker(
                 SELECT bucket, object_key, blob_path, encode(blob_sha256, 'hex') AS sha,
                        size_bytes, encryption_mode
                 FROM objects
-                WHERE deleted_at IS NULL
+                WHERE deleted_at IS NULL AND is_delete_marker = FALSE
                 """.trimIndent(),
             ).use { ps ->
                 ps.executeQuery().use { rs ->

@@ -445,6 +445,104 @@ class JdbcMetadataRepositoryTest {
         )
     }
 
+    @Test
+    fun `bucket grants authorize exact and wildcard permissions`() {
+        val (db, repo) = newRepo()
+        db.use {
+            it.withConnection { c ->
+                repo.upsertAccessKey(c, "AKID", "secret", "test key")
+                repo.createBucket(c, "docs", "us-east-1", "owner")
+                repo.createBucket(c, "logs", "us-east-1", "owner")
+
+                repo.grantBucketPermission(c, "AKID", "docs", "READ")
+                assertTrue(repo.hasBucketPermission(c, "AKID", "docs", "READ"))
+                assertFalse(repo.hasBucketPermission(c, "AKID", "docs", "WRITE"))
+                assertFalse(repo.hasBucketPermission(c, "AKID", "logs", "READ"))
+
+                repo.grantBucketPermission(c, "AKID", "*", "ADMIN")
+                assertTrue(repo.hasBucketPermission(c, "AKID", "logs", "READ"))
+                assertTrue(repo.hasBucketPermission(c, "AKID", "logs", "WRITE"))
+                assertTrue(repo.hasBucketPermission(c, "AKID", "logs", "ADMIN"))
+                assertEquals(setOf("docs", "logs"), repo.listBucketsForAccessKey(c, "AKID").map { b -> b.name }.toSet())
+
+                assertTrue(repo.revokeBucketPermission(c, "AKID", "*", "ADMIN"))
+                assertFalse(repo.hasBucketPermission(c, "AKID", "logs", "READ"))
+            }
+        }
+    }
+
+    @Test
+    fun `versioned puts keep old versions and delete marker hides latest`() {
+        val (db, repo) = newRepo()
+        db.use {
+            it.withTransaction { c ->
+                repo.createBucket(c, "b", "us-east-1", "o")
+                assertTrue(repo.setBucketVersioning(c, "b", "ENABLED"))
+                repo.putObject(c, sampleMeta("b", "k", sizeBytes = 1).copy(versionId = "v1", etag = "\"v1\""))
+                repo.putObject(c, sampleMeta("b", "k", sizeBytes = 2).copy(versionId = "v2", etag = "\"v2\""))
+
+                assertEquals("\"v2\"", repo.getObject(c, "b", "k")!!.etag)
+                assertEquals("\"v1\"", repo.getObjectVersion(c, "b", "k", "v1")!!.etag)
+                assertEquals(2, repo.listObjectVersions(c, "b", null).size)
+
+                repo.createDeleteMarker(c, "b", "k", "dm1")
+                assertNull(repo.getObject(c, "b", "k"))
+                val versions = repo.listObjectVersions(c, "b", null)
+                assertEquals(3, versions.size)
+                assertTrue(versions.single { v -> v.versionId == "dm1" }.isDeleteMarker)
+                assertTrue(versions.single { v -> v.versionId == "dm1" }.isLatest)
+            }
+        }
+    }
+
+    @Test
+    fun `retention and legal hold block version delete until cleared`() {
+        val (db, repo) = newRepo()
+        db.use {
+            it.withTransaction { c ->
+                repo.createBucket(c, "b", "us-east-1", "o")
+                repo.putObject(c, sampleMeta("b", "k", sizeBytes = 1).copy(versionId = "v1"))
+                assertTrue(repo.putRetention(c, "b", "k", "v1", "GOVERNANCE", Instant.now().plusSeconds(3600)))
+                assertFalse(repo.deleteObjectVersion(c, "b", "k", "v1", Instant.now()))
+                assertTrue(repo.putRetention(c, "b", "k", "v1", "GOVERNANCE", Instant.now().minusSeconds(1)))
+                assertTrue(repo.putLegalHold(c, "b", "k", "v1", true))
+                assertFalse(repo.deleteObjectVersion(c, "b", "k", "v1", Instant.now()))
+                assertTrue(repo.putLegalHold(c, "b", "k", "v1", false))
+                assertTrue(repo.deleteObjectVersion(c, "b", "k", "v1", Instant.now()))
+            }
+        }
+    }
+
+    @Test
+    fun `lifecycle expires eligible unlocked versions only`() {
+        val (db, repo) = newRepo()
+        db.use {
+            it.withTransaction { c ->
+                repo.createBucket(c, "b", "us-east-1", "o")
+                repo.putObject(c, sampleMeta("b", "old", sizeBytes = 1).copy(versionId = "old"))
+                repo.putObject(c, sampleMeta("b", "locked", sizeBytes = 1).copy(versionId = "locked", legalHold = true))
+                repo.replaceLifecycleRules(
+                    c,
+                    "b",
+                    listOf(
+                        LifecycleRuleRecord(
+                            bucket = "b",
+                            ruleId = "expire-now",
+                            enabled = true,
+                            prefix = null,
+                            currentVersionExpirationDays = 0,
+                            noncurrentVersionExpirationDays = null,
+                            abortIncompleteMultipartDays = null,
+                        ),
+                    ),
+                )
+                assertEquals(1, repo.expireLifecycleObjects(c, batchSize = 100, now = Instant.now().plusSeconds(1)))
+                assertNull(repo.getObjectVersion(c, "b", "old", "old"))
+                assertNotNull(repo.getObjectVersion(c, "b", "locked", "locked"))
+            }
+        }
+    }
+
     private fun sampleMeta(
         bucket: String,
         key: String,

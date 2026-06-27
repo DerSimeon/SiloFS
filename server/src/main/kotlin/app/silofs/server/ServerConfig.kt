@@ -28,6 +28,7 @@ data class ServerConfig(
     val requestMetrics: RequestMetricsRegistry = RequestMetricsRegistry(),
     val securityConfig: SecurityConfig = SecurityConfig.fromEnv(),
     val objectEncryptionConfig: ObjectEncryptionConfig = ObjectEncryptionConfig.fromEnv(),
+    val lifecycleConfig: LifecycleConfig = LifecycleConfig.fromEnv(),
     val sigv4MaxClockSkewSeconds: Long = 900L,
 ) {
     companion object {
@@ -58,6 +59,7 @@ data class ServerConfig(
                         securityConfig = securityConfig,
                     ),
                 )
+                repo.grantBucketPermission(c, accessKeyId, "*", "ADMIN")
             }
 
             val blobStore = FsBlobStore(dataDir, objectEncryptionConfig.encryption)
@@ -76,6 +78,7 @@ data class ServerConfig(
                 operationalConfig = OperationalConfig.fromEnv(),
                 securityConfig = securityConfig,
                 objectEncryptionConfig = objectEncryptionConfig,
+                lifecycleConfig = LifecycleConfig.fromEnv(),
                 sigv4MaxClockSkewSeconds = maxClockSkew,
             )
         }
@@ -89,6 +92,31 @@ data class ServerConfig(
             name: String,
             default: Long,
         ): Long = System.getenv(name)?.toLongOrNull() ?: default
+    }
+}
+
+data class LifecycleConfig(
+    val enabled: Boolean,
+    val sweepIntervalSeconds: Long,
+    val batchSize: Int,
+) {
+    companion object {
+        fun fromEnv(): LifecycleConfig =
+            LifecycleConfig(
+                enabled = envOrDefault("S3_LIFECYCLE_ENABLED", "false").toBoolean(),
+                sweepIntervalSeconds = envLong("S3_LIFECYCLE_SWEEP_INTERVAL_SECONDS", 3600L),
+                batchSize = envOrDefault("S3_LIFECYCLE_BATCH_SIZE", "1000").toInt(),
+            )
+
+        private fun envLong(
+            name: String,
+            default: Long,
+        ): Long = System.getenv(name)?.toLongOrNull() ?: default
+
+        private fun envOrDefault(
+            name: String,
+            default: String,
+        ): String = System.getenv(name)?.takeIf { it.isNotBlank() } ?: default
     }
 }
 

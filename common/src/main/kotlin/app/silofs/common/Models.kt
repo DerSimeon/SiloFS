@@ -34,6 +34,10 @@ data class ObjectMetadata(
     val encryptionMode: String? = null,
     val encryptionKeyId: String? = null,
     val encryptionNonce: ByteArray? = null,
+    val isDeleteMarker: Boolean = false,
+    val retentionMode: String? = null,
+    val retainUntil: java.time.Instant? = null,
+    val legalHold: Boolean = false,
 )
 
 data class BucketInfo(
@@ -41,6 +45,10 @@ data class BucketInfo(
     val region: String,
     val ownerId: String,
     val createdAt: java.time.Instant,
+    val versioningStatus: String = "DISABLED",
+    val objectLockEnabled: Boolean = false,
+    val defaultRetentionMode: String? = null,
+    val defaultRetentionDays: Int? = null,
 )
 
 /**
@@ -70,6 +78,17 @@ data class ListObjectsV2Result(
 data class ListObject(
     val key: String,
     val etag: String,
+    val sizeBytes: Long,
+    val lastModified: java.time.Instant,
+    val storageClass: String,
+)
+
+data class ObjectVersion(
+    val key: String,
+    val versionId: String,
+    val isLatest: Boolean,
+    val isDeleteMarker: Boolean,
+    val etag: String?,
     val sizeBytes: Long,
     val lastModified: java.time.Instant,
     val storageClass: String,

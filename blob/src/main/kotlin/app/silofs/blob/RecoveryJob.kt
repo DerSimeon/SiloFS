@@ -272,7 +272,7 @@ class RecoveryJob(
         // and active blob write intents count as references.
         val sql =
             "SELECT encode(blob_sha256, 'hex') AS h FROM objects " +
-                "WHERE encode(blob_sha256, 'hex') IN ($placeholders) AND deleted_at IS NULL " +
+                "WHERE encode(blob_sha256, 'hex') IN ($placeholders) AND deleted_at IS NULL AND is_delete_marker = FALSE " +
                 "UNION " +
                 "SELECT encode(blob_sha256, 'hex') AS h FROM multipart_parts " +
                 "WHERE encode(blob_sha256, 'hex') IN ($placeholders) " +

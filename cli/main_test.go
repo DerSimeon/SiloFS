@@ -82,6 +82,19 @@ func TestRootCommandRoutesVersion(t *testing.T) {
 	}
 }
 
+func TestNormalizedPermission(t *testing.T) {
+	got, err := normalizedPermission("read")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "READ" {
+		t.Fatalf("expected READ, got %q", got)
+	}
+	if _, err := normalizedPermission("delete"); err == nil {
+		t.Fatal("expected invalid permission error")
+	}
+}
+
 func TestDryRunRequiredForRepair(t *testing.T) {
 	var out bytes.Buffer
 	var errOut bytes.Buffer

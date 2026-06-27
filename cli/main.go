@@ -28,7 +28,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const version = "0.10.0"
+var version = "0.10.0-dev"
 
 type appConfig struct {
 	Endpoint        string
@@ -444,6 +444,7 @@ func adminCommand(flags *flagConfig, stdout io.Writer) *cobra.Command {
 	cmd := &cobra.Command{Use: "admin", Short: "Local admin commands"}
 	cmd.AddCommand(adminInspectCommand(flags, stdout), adminStorageCommand(flags, stdout), adminCheckBlobsCommand(flags, stdout))
 	cmd.AddCommand(adminRepairCommand(flags, stdout), adminGCCommand(flags, stdout), adminBackupCommand(flags, stdout), adminMigrateCommand(flags, stdout), adminAccessKeyCommand(flags, stdout))
+	cmd.AddCommand(adminGrantCommand(flags, stdout))
 	return cmd
 }
 
@@ -478,7 +479,7 @@ func adminInspectCommand(flags *flagConfig, stdout io.Writer) *cobra.Command {
 		if !isSHA256(sha) {
 			return errors.New("--sha256 must be 64 hex characters")
 		}
-		sql := `SELECT 'object' AS kind, bucket, object_key, NULL AS upload_id, NULL::integer AS part_number FROM objects WHERE deleted_at IS NULL AND encode(blob_sha256, 'hex')=$1
+		sql := `SELECT 'object' AS kind, bucket, object_key, NULL AS upload_id, NULL::integer AS part_number FROM objects WHERE deleted_at IS NULL AND is_delete_marker = FALSE AND encode(blob_sha256, 'hex')=$1
 UNION ALL SELECT 'multipart_part', NULL, NULL, upload_id, part_number FROM multipart_parts WHERE encode(blob_sha256, 'hex')=$1
 UNION ALL SELECT 'blob_write_intent', NULL, NULL, intent_id, NULL::integer FROM blob_write_intents WHERE blob_sha256_hex=$1`
 		return queryRows(ctx, stdout, conn, sql, sha)
@@ -617,6 +618,96 @@ ON CONFLICT (access_key_id) DO UPDATE SET secret_access_key=EXCLUDED.secret_acce
 	cmd.AddCommand(accessKeyStateCommand("disable", "DISABLED", flags, stdout), accessKeyStateCommand("enable", "ACTIVE", flags, stdout))
 	cmd.AddCommand(accessKeyDeleteCommand(flags, stdout), accessKeyRotateCommand(flags, stdout), accessKeyReencryptCommand(flags, stdout))
 	return cmd
+}
+
+func adminGrantCommand(flags *flagConfig, stdout io.Writer) *cobra.Command {
+	cmd := &cobra.Command{Use: "grant", Short: "Manage bucket-scoped access grants"}
+	cmd.AddCommand(grantAddCommand(flags, stdout), grantListCommand(flags, stdout), grantRemoveCommand(flags, stdout))
+	return cmd
+}
+
+func grantAddCommand(flags *flagConfig, stdout io.Writer) *cobra.Command {
+	var accessKeyID, bucket, permission string
+	cmd := &cobra.Command{Use: "add", Args: cobra.NoArgs, RunE: withDB(flags, func(ctx context.Context, conn *pgx.Conn, cfg appConfig) error {
+		perm, err := normalizedPermission(permission)
+		if err != nil {
+			return err
+		}
+		if accessKeyID == "" || bucket == "" {
+			return errors.New("--access-key-id and --bucket are required")
+		}
+		_, err = conn.Exec(ctx, `INSERT INTO access_key_bucket_grants(access_key_id, bucket, permission)
+VALUES ($1,$2,$3)
+ON CONFLICT (access_key_id, bucket, permission) DO NOTHING`, accessKeyID, bucket, perm)
+		if err != nil {
+			return err
+		}
+		audit(ctx, conn, "AdminGrantAdd", accessKeyID)
+		fmt.Fprintf(stdout, "access_key_id=%s\nbucket=%s\npermission=%s\ngranted=true\n", accessKeyID, bucket, perm)
+		return nil
+	})}
+	cmd.Flags().StringVar(&accessKeyID, "access-key-id", "", "access key id")
+	cmd.Flags().StringVar(&bucket, "bucket", "", "bucket name or *")
+	cmd.Flags().StringVar(&permission, "permission", "", "READ, WRITE, or ADMIN")
+	return cmd
+}
+
+func grantListCommand(flags *flagConfig, stdout io.Writer) *cobra.Command {
+	var accessKeyID, bucket string
+	cmd := &cobra.Command{Use: "list", Args: cobra.NoArgs, RunE: withDB(flags, func(ctx context.Context, conn *pgx.Conn, cfg appConfig) error {
+		sql := "SELECT access_key_id, bucket, permission, created_at FROM access_key_bucket_grants WHERE 1=1"
+		args := []any{}
+		if accessKeyID != "" {
+			args = append(args, accessKeyID)
+			sql += fmt.Sprintf(" AND access_key_id=$%d", len(args))
+		}
+		if bucket != "" {
+			args = append(args, bucket)
+			sql += fmt.Sprintf(" AND bucket=$%d", len(args))
+		}
+		sql += " ORDER BY access_key_id, bucket, permission"
+		return queryRows(ctx, stdout, conn, sql, args...)
+	})}
+	cmd.Flags().StringVar(&accessKeyID, "access-key-id", "", "access key id")
+	cmd.Flags().StringVar(&bucket, "bucket", "", "bucket name or *")
+	return cmd
+}
+
+func grantRemoveCommand(flags *flagConfig, stdout io.Writer) *cobra.Command {
+	var accessKeyID, bucket, permission string
+	cmd := &cobra.Command{Use: "remove", Args: cobra.NoArgs, RunE: withDB(flags, func(ctx context.Context, conn *pgx.Conn, cfg appConfig) error {
+		perm, err := normalizedPermission(permission)
+		if err != nil {
+			return err
+		}
+		if accessKeyID == "" || bucket == "" {
+			return errors.New("--access-key-id and --bucket are required")
+		}
+		tag, err := conn.Exec(ctx, "DELETE FROM access_key_bucket_grants WHERE access_key_id=$1 AND bucket=$2 AND permission=$3", accessKeyID, bucket, perm)
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() == 0 {
+			return fmt.Errorf("grant not found: access_key_id=%s bucket=%s permission=%s", accessKeyID, bucket, perm)
+		}
+		audit(ctx, conn, "AdminGrantRemove", accessKeyID)
+		fmt.Fprintf(stdout, "access_key_id=%s\nbucket=%s\npermission=%s\nremoved=true\n", accessKeyID, bucket, perm)
+		return nil
+	})}
+	cmd.Flags().StringVar(&accessKeyID, "access-key-id", "", "access key id")
+	cmd.Flags().StringVar(&bucket, "bucket", "", "bucket name or *")
+	cmd.Flags().StringVar(&permission, "permission", "", "READ, WRITE, or ADMIN")
+	return cmd
+}
+
+func normalizedPermission(v string) (string, error) {
+	perm := strings.ToUpper(v)
+	switch perm {
+	case "READ", "WRITE", "ADMIN":
+		return perm, nil
+	default:
+		return "", errors.New("--permission must be READ, WRITE, or ADMIN")
+	}
 }
 
 func accessKeyStateCommand(name, state string, flags *flagConfig, stdout io.Writer) *cobra.Command {
@@ -816,7 +907,7 @@ func checkBlobs(ctx context.Context, conn *pgx.Conn, cfg appConfig, stdout io.Wr
 }
 
 func referencedBlobSet(ctx context.Context, conn *pgx.Conn) (map[string]struct{}, error) {
-	sql := `SELECT encode(blob_sha256, 'hex') FROM objects WHERE deleted_at IS NULL
+	sql := `SELECT encode(blob_sha256, 'hex') FROM objects WHERE deleted_at IS NULL AND is_delete_marker = FALSE
 UNION SELECT encode(blob_sha256, 'hex') FROM multipart_parts
 UNION SELECT blob_sha256_hex FROM blob_write_intents`
 	r, err := conn.Query(ctx, sql)

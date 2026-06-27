@@ -86,6 +86,7 @@ class ExtendedCompatibilityTest {
         val repo = JdbcMetadataRepository()
         database.withConnection { conn ->
             repo.upsertAccessKey(conn, ACCESS_KEY, SECRET_KEY, "extended compatibility test key")
+            repo.grantBucketPermission(conn, ACCESS_KEY, "*", "ADMIN")
         }
         val config =
             ServerConfig(

@@ -77,6 +77,7 @@ class MultipartHandlers(
     private val blobStore: BlobStore = config.blobStore,
 ) {
     private val log = LoggerFactory.getLogger(MultipartHandlers::class.java)
+    private val authz = BucketAuthorization(config)
 
     // ---------- CreateMultipartUpload ----------
 
@@ -96,6 +97,7 @@ class MultipartHandlers(
     ) = withContext(Dispatchers.IO) {
         BucketName.validate(bucket)
         ObjectKey.validate(key)
+        authz.require(call, bucket, BucketPermission.WRITE)
 
         val effectiveStorageClass = storageClass ?: "STANDARD"
         if (effectiveStorageClass !in S3Handlers.ALLOWED_STORAGE_CLASSES) {
@@ -156,6 +158,7 @@ class MultipartHandlers(
     ) = withUploadPermit {
         BucketName.validate(bucket)
         ObjectKey.validate(key)
+        authz.require(call, bucket, BucketPermission.WRITE)
 
         // ---- Part number validation ----
         if (partNumber < 1 || partNumber > 10_000) {
@@ -336,6 +339,7 @@ class MultipartHandlers(
     ) = withMultipartCompletionPermit {
         BucketName.validate(bucket)
         ObjectKey.validate(key)
+        authz.require(call, bucket, BucketPermission.WRITE)
 
         // ---- Validate the requested part list ----
         if (requestedParts.isEmpty()) {
@@ -450,6 +454,29 @@ class MultipartHandlers(
 
                 val etag = ETag.fromMultipart(partMd5s)
 
+                val bucketInfo =
+                    withS3 {
+                        config.database.withConnection { conn ->
+                            repo.getBucket(conn, bucket) ?: throw S3Errors.noSuchBucket(bucket)
+                        }
+                    }
+                val versionId =
+                    if (bucketInfo.versioningStatus == "ENABLED") {
+                        java.util.UUID
+                            .randomUUID()
+                            .toString()
+                    } else {
+                        "null"
+                    }
+                val defaultRetentionMode =
+                    bucketInfo.defaultRetentionMode?.takeIf {
+                        bucketInfo.objectLockEnabled && bucketInfo.defaultRetentionDays != null
+                    }
+                val defaultRetainUntil =
+                    bucketInfo.defaultRetentionDays
+                        ?.takeIf { bucketInfo.objectLockEnabled && bucketInfo.defaultRetentionMode != null }
+                        ?.let { Instant.now().plus(it.toLong(), java.time.temporal.ChronoUnit.DAYS) }
+
                 val meta =
                     ObjectMetadata(
                         bucket = bucket,
@@ -465,12 +492,14 @@ class MultipartHandlers(
                         contentDisposition = mpu.contentDisposition,
                         expires = mpu.expires,
                         userMetadata = mpu.userMetadata,
-                        versionId = "null",
+                        versionId = versionId,
                         storageClass = mpu.storageClass,
                         createdAt = Instant.now(),
                         encryptionMode = stored.encryptionMode,
                         encryptionKeyId = stored.encryptionKeyId,
                         encryptionNonce = stored.encryptionNonce,
+                        retentionMode = defaultRetentionMode,
+                        retainUntil = defaultRetainUntil,
                     )
 
                 // ---- Atomic commit: object row + mark COMPLETED + delete parts ----
@@ -511,6 +540,7 @@ class MultipartHandlers(
                         s3Tag("ETag", etag)
                     }
                 call.response.headers.append(HttpHeaders.ETag, etag)
+                if (meta.versionId != "null") call.response.headers.append("x-amz-version-id", meta.versionId)
                 call.respondText(body, ContentType.Application.Xml.withCharset(Charsets.UTF_8), HttpStatusCode.OK)
             } catch (t: Throwable) {
                 write.abort()
@@ -542,6 +572,7 @@ class MultipartHandlers(
     ) = withContext(Dispatchers.IO) {
         BucketName.validate(bucket)
         ObjectKey.validate(key)
+        authz.require(call, bucket, BucketPermission.WRITE)
         withS3 {
             config.database.withTransaction { conn ->
                 if (!repo.bucketExists(conn, bucket)) throw S3Errors.noSuchBucket(bucket)
@@ -581,6 +612,7 @@ class MultipartHandlers(
     ) = withContext(Dispatchers.IO) {
         BucketName.validate(bucket)
         ObjectKey.validate(key)
+        authz.require(call, bucket, BucketPermission.READ)
         val (mpu, parts) =
             withS3 {
                 config.database.withConnection { conn ->
@@ -637,6 +669,7 @@ class MultipartHandlers(
         delimiter: String?,
     ) = withContext(Dispatchers.IO) {
         BucketName.validate(bucket)
+        authz.require(call, bucket, BucketPermission.READ)
         val uploads =
             withS3 {
                 config.database.withConnection { conn ->
@@ -733,6 +766,8 @@ class MultipartHandlers(
         val srcKey = raw.substring(slashIdx + 1)
         BucketName.validate(srcBucket)
         ObjectKey.validate(srcKey)
+        authz.require(call, srcBucket, BucketPermission.READ)
+        authz.require(call, destBucket, BucketPermission.WRITE)
 
         // ---- Verify upload exists ----
         val mpu =

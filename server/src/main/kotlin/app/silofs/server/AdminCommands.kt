@@ -5,6 +5,7 @@ import app.silofs.blob.FsBlobStore
 import app.silofs.blob.RecoveryJob
 import app.silofs.metadata.AuditEventRecord
 import java.nio.file.Files
+import java.util.Locale
 
 internal fun runAdminCommand(
     args: Array<String>,
@@ -15,6 +16,7 @@ internal fun runAdminCommand(
             args.toList() == listOf("admin", "check-blobs") -> checkBlobs(config)
             args.toList() == listOf("admin", "recover-once") -> recoverOnce(config)
             args.size >= 3 && args[0] == "admin" && args[1] == "access-key" -> accessKeyCommand(args.drop(2), config)
+            args.size >= 3 && args[0] == "admin" && args[1] == "grant" -> grantCommand(args.drop(2), config)
             args.size >= 3 && args[0] == "admin" && args[1] == "inspect" -> inspectCommand(args.drop(2), config)
             args.toList() == listOf("admin", "storage", "usage") -> storageUsage(config)
             args.size >= 3 && args[0] == "admin" && args[1] == "backup" && args[2] == "verify" -> backupVerify(args.drop(3), config)
@@ -79,6 +81,17 @@ private fun inspectCommand(
         else -> usage()
     }
 
+private fun grantCommand(
+    args: List<String>,
+    config: ServerConfig,
+): Int =
+    when (args.firstOrNull()) {
+        "add" -> addGrant(args.drop(1), config)
+        "list" -> listGrants(args.drop(1), config)
+        "remove" -> removeGrant(args.drop(1), config)
+        else -> usage()
+    }
+
 private fun inspectBuckets(config: ServerConfig): Int {
     config.database.withConnection { conn ->
         config.repository.listBuckets(conn).forEach { bucket ->
@@ -129,7 +142,7 @@ private fun inspectBlobRefs(
             .prepareStatement(
                 """
                 SELECT 'object' AS kind, bucket, object_key, NULL AS upload_id, NULL::integer AS part_number
-                FROM objects WHERE deleted_at IS NULL AND encode(blob_sha256, 'hex') = ?
+                FROM objects WHERE deleted_at IS NULL AND is_delete_marker = FALSE AND encode(blob_sha256, 'hex') = ?
                 UNION ALL
                 SELECT 'multipart_part' AS kind, NULL AS bucket, NULL AS object_key, upload_id, part_number
                 FROM multipart_parts WHERE encode(blob_sha256, 'hex') = ?
@@ -348,6 +361,77 @@ private fun reencryptAccessKeys(config: ServerConfig): Int {
     return 0
 }
 
+private fun addGrant(
+    args: List<String>,
+    config: ServerConfig,
+): Int {
+    val options = parseOptions(args)
+    val accessKeyId = options["access-key-id"] ?: return usage()
+    val bucket = options["bucket"] ?: return usage()
+    val permission = normalizeGrantPermission(options["permission"] ?: return usage()) ?: return usage()
+    config.database.withConnection { conn ->
+        config.repository.grantBucketPermission(conn, accessKeyId, bucket, permission)
+        config.repository.insertAuditEvent(conn, adminAudit("AdminGrantAdd", accessKeyId, grantDetail(bucket, permission)))
+    }
+    println("access_key_id=$accessKeyId")
+    println("bucket=$bucket")
+    println("permission=$permission")
+    println("granted=true")
+    return 0
+}
+
+private fun listGrants(
+    args: List<String>,
+    config: ServerConfig,
+): Int {
+    val options = parseOptions(args)
+    config.database.withConnection { conn ->
+        config.repository
+            .listBucketGrants(conn, options["access-key-id"], options["bucket"])
+            .forEach { grant ->
+                println(
+                    "access_key_id=${grant.accessKeyId}\tbucket=${grant.bucket}\t" +
+                        "permission=${grant.permission}\tcreated_at=${grant.createdAt ?: ""}",
+                )
+            }
+    }
+    return 0
+}
+
+private fun removeGrant(
+    args: List<String>,
+    config: ServerConfig,
+): Int {
+    val options = parseOptions(args)
+    val accessKeyId = options["access-key-id"] ?: return usage()
+    val bucket = options["bucket"] ?: return usage()
+    val permission = normalizeGrantPermission(options["permission"] ?: return usage()) ?: return usage()
+    val removed =
+        config.database.withConnection { conn ->
+            val ok = config.repository.revokeBucketPermission(conn, accessKeyId, bucket, permission)
+            if (ok) config.repository.insertAuditEvent(conn, adminAudit("AdminGrantRemove", accessKeyId, grantDetail(bucket, permission)))
+            ok
+        }
+    if (!removed) {
+        System.err.println("grant not found: access_key_id=$accessKeyId bucket=$bucket permission=$permission")
+        return 2
+    }
+    println("access_key_id=$accessKeyId")
+    println("bucket=$bucket")
+    println("permission=$permission")
+    println("removed=true")
+    return 0
+}
+
+private fun normalizeGrantPermission(value: String): String? = value.uppercase(Locale.US).takeIf { it in setOf("READ", "WRITE", "ADMIN") }
+
+private fun grantDetail(
+    bucket: String,
+    permission: String,
+): String = """{"bucket":"${jsonEscape(bucket)}","permission":"${jsonEscape(permission)}"}"""
+
+private fun jsonEscape(value: String): String = value.replace("\\", "\\\\").replace("\"", "\\\"")
+
 private fun adminAudit(
     operation: String,
     accessKeyId: String?,
@@ -388,7 +472,10 @@ private fun usage(): Int {
             "admin backup verify --manifest PATH | admin repair --dry-run | admin gc --dry-run | admin migrate | " +
             "admin access-key create [--access-key-id ID] [--description TEXT] | " +
             "admin access-key list | admin access-key disable ID | admin access-key enable ID | " +
-            "admin access-key rotate ID | admin access-key delete ID | admin access-key reencrypt",
+            "admin access-key rotate ID | admin access-key delete ID | admin access-key reencrypt | " +
+            "admin grant add --access-key-id ID --bucket BUCKET --permission READ|WRITE|ADMIN | " +
+            "admin grant list [--access-key-id ID] [--bucket BUCKET] | " +
+            "admin grant remove --access-key-id ID --bucket BUCKET --permission READ|WRITE|ADMIN",
     )
     return 2
 }

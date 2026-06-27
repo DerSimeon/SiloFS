@@ -2,6 +2,7 @@ package app.silofs.server
 
 import app.silofs.blob.BlobStore
 import app.silofs.blob.streamRange
+import app.silofs.common.BucketInfo
 import app.silofs.common.BucketName
 import app.silofs.common.ByteRange
 import app.silofs.common.ETag
@@ -37,7 +38,9 @@ import java.io.InputStream
 import java.io.OutputStream
 import java.nio.file.Path
 import java.time.Instant
+import java.time.temporal.ChronoUnit
 import java.util.Locale
+import java.util.UUID
 
 /**
  * The single point of entry for S3 operations. Each handler maps HTTP request
@@ -61,6 +64,7 @@ class S3Handlers(
     private val blobStore: BlobStore = config.blobStore,
 ) {
     private val log = LoggerFactory.getLogger(S3Handlers::class.java)
+    private val authz = BucketAuthorization(config)
 
     // ---------- Bucket ----------
 
@@ -69,6 +73,7 @@ class S3Handlers(
         bucket: String,
     ) = withContext(Dispatchers.IO) {
         BucketName.validate(bucket)
+        authz.require(call, "*", BucketPermission.ADMIN)
         // Validate CreateBucketConfiguration XML body if present (M2 only checks
         // for the LocationConstraint element — others are NotImplemented).
         withS3 {
@@ -88,6 +93,7 @@ class S3Handlers(
         bucket: String,
     ) = withContext(Dispatchers.IO) {
         BucketName.validate(bucket)
+        authz.require(call, bucket, BucketPermission.READ)
         val exists =
             withS3 {
                 config.database.withConnection { conn -> repo.bucketExists(conn, bucket) }
@@ -107,6 +113,7 @@ class S3Handlers(
     ): Unit =
         withContext(Dispatchers.IO) {
             BucketName.validate(bucket)
+            authz.require(call, bucket, BucketPermission.ADMIN)
             withS3 {
                 config.database.withTransaction { conn ->
                     if (!repo.bucketExists(conn, bucket)) throw S3Errors.noSuchBucket(bucket)
@@ -125,9 +132,12 @@ class S3Handlers(
 
     suspend fun listBuckets(call: ApplicationCall) =
         withContext(Dispatchers.IO) {
+            val accessKeyId = authz.authenticatedAccessKey(call)
             val buckets =
                 withS3 {
-                    config.database.withConnection { conn -> repo.listBuckets(conn) }
+                    config.database.withConnection { conn ->
+                        if (accessKeyId == null) repo.listBuckets(conn) else repo.listBucketsForAccessKey(conn, accessKeyId)
+                    }
                 }
             val body =
                 s3XmlDocument("ListAllMyBucketsResult") {
@@ -152,6 +162,7 @@ class S3Handlers(
         bucket: String,
     ) = withContext(Dispatchers.IO) {
         BucketName.validate(bucket)
+        authz.require(call, bucket, BucketPermission.READ)
         val exists =
             withS3 {
                 config.database.withConnection { conn -> repo.bucketExists(conn, bucket) }
@@ -168,6 +179,144 @@ class S3Handlers(
         call.respondText(body, ContentType.Application.Xml.withCharset(Charsets.UTF_8), HttpStatusCode.OK)
     }
 
+    suspend fun getBucketVersioning(
+        call: ApplicationCall,
+        bucket: String,
+    ) = withContext(Dispatchers.IO) {
+        val info = requireBucket(call, bucket, BucketPermission.READ)
+        val body =
+            s3XmlDocument("VersioningConfiguration") {
+                if (info.versioningStatus == "ENABLED") s3Tag("Status", "Enabled")
+                if (info.versioningStatus == "SUSPENDED") s3Tag("Status", "Suspended")
+            }
+        call.respondText(body, ContentType.Application.Xml.withCharset(Charsets.UTF_8), HttpStatusCode.OK)
+    }
+
+    suspend fun putBucketVersioning(
+        call: ApplicationCall,
+        bucket: String,
+        body: String,
+    ) = withContext(Dispatchers.IO) {
+        BucketName.validate(bucket)
+        authz.require(call, bucket, BucketPermission.ADMIN)
+        val status = GovernanceXml.parseVersioningStatus(body)
+        withS3 {
+            config.database.withTransaction { conn ->
+                if (!repo.setBucketVersioning(conn, bucket, status)) throw S3Errors.noSuchBucket(bucket)
+            }
+        }
+        call.respondText("", ContentType.Application.Xml.withCharset(Charsets.UTF_8), HttpStatusCode.OK)
+    }
+
+    suspend fun getBucketObjectLock(
+        call: ApplicationCall,
+        bucket: String,
+    ) = withContext(Dispatchers.IO) {
+        val info = requireBucket(call, bucket, BucketPermission.READ)
+        if (!info.objectLockEnabled) throw S3Errors.notImplemented("Object Lock is not enabled for this bucket")
+        val body =
+            s3XmlDocument("ObjectLockConfiguration") {
+                s3Tag("ObjectLockEnabled", "Enabled")
+                val defaultRetentionMode = info.defaultRetentionMode
+                val defaultRetentionDays = info.defaultRetentionDays
+                if (defaultRetentionMode != null && defaultRetentionDays != null) {
+                    s3Open("Rule")
+                    s3Open("DefaultRetention")
+                    s3Tag("Mode", defaultRetentionMode)
+                    s3TagLong("Days", defaultRetentionDays.toLong())
+                    s3Close("DefaultRetention")
+                    s3Close("Rule")
+                }
+            }
+        call.respondText(body, ContentType.Application.Xml.withCharset(Charsets.UTF_8), HttpStatusCode.OK)
+    }
+
+    suspend fun putBucketObjectLock(
+        call: ApplicationCall,
+        bucket: String,
+        body: String,
+    ) = withContext(Dispatchers.IO) {
+        BucketName.validate(bucket)
+        authz.require(call, bucket, BucketPermission.ADMIN)
+        val (mode, days) = GovernanceXml.parseObjectLockDefault(body)
+        withS3 {
+            config.database.withTransaction { conn ->
+                if (!repo.setBucketObjectLock(conn, bucket, enabled = true, defaultRetentionMode = mode, defaultRetentionDays = days)) {
+                    throw S3Errors.noSuchBucket(bucket)
+                }
+            }
+        }
+        call.respondText("", ContentType.Application.Xml.withCharset(Charsets.UTF_8), HttpStatusCode.OK)
+    }
+
+    suspend fun getBucketLifecycle(
+        call: ApplicationCall,
+        bucket: String,
+    ) = withContext(Dispatchers.IO) {
+        requireBucket(call, bucket, BucketPermission.READ)
+        val rules = withS3 { config.database.withConnection { conn -> repo.listLifecycleRules(conn, bucket) } }
+        val body =
+            s3XmlDocument("LifecycleConfiguration") {
+                rules.forEach { rule ->
+                    s3Open("Rule")
+                    s3Tag("ID", rule.ruleId)
+                    s3Tag("Status", if (rule.enabled) "Enabled" else "Disabled")
+                    s3Open("Filter")
+                    s3Tag("Prefix", rule.prefix ?: "")
+                    s3Close("Filter")
+                    rule.currentVersionExpirationDays?.let {
+                        s3Open("Expiration")
+                        s3TagLong("Days", it.toLong())
+                        s3Close("Expiration")
+                    }
+                    rule.noncurrentVersionExpirationDays?.let {
+                        s3Open("NoncurrentVersionExpiration")
+                        s3TagLong("NoncurrentDays", it.toLong())
+                        s3Close("NoncurrentVersionExpiration")
+                    }
+                    rule.abortIncompleteMultipartDays?.let {
+                        s3Open("AbortIncompleteMultipartUpload")
+                        s3TagLong("DaysAfterInitiation", it.toLong())
+                        s3Close("AbortIncompleteMultipartUpload")
+                    }
+                    s3Close("Rule")
+                }
+            }
+        call.respondText(body, ContentType.Application.Xml.withCharset(Charsets.UTF_8), HttpStatusCode.OK)
+    }
+
+    suspend fun putBucketLifecycle(
+        call: ApplicationCall,
+        bucket: String,
+        body: String,
+    ) = withContext(Dispatchers.IO) {
+        BucketName.validate(bucket)
+        authz.require(call, bucket, BucketPermission.ADMIN)
+        val rules = GovernanceXml.parseLifecycleRules(body, bucket)
+        withS3 {
+            config.database.withTransaction { conn ->
+                if (!repo.bucketExists(conn, bucket)) throw S3Errors.noSuchBucket(bucket)
+                repo.replaceLifecycleRules(conn, bucket, rules)
+            }
+        }
+        call.respondText("", ContentType.Application.Xml.withCharset(Charsets.UTF_8), HttpStatusCode.OK)
+    }
+
+    suspend fun deleteBucketLifecycle(
+        call: ApplicationCall,
+        bucket: String,
+    ) = withContext(Dispatchers.IO) {
+        BucketName.validate(bucket)
+        authz.require(call, bucket, BucketPermission.ADMIN)
+        withS3 {
+            config.database.withTransaction { conn ->
+                if (!repo.bucketExists(conn, bucket)) throw S3Errors.noSuchBucket(bucket)
+                repo.replaceLifecycleRules(conn, bucket, emptyList())
+            }
+        }
+        call.respondText("", ContentType.Application.Xml.withCharset(Charsets.UTF_8), HttpStatusCode.NoContent)
+    }
+
     suspend fun listObjectsV2(
         call: ApplicationCall,
         bucket: String,
@@ -179,6 +328,7 @@ class S3Handlers(
         encodingType: String?,
     ) = withContext(Dispatchers.IO) {
         BucketName.validate(bucket)
+        authz.require(call, bucket, BucketPermission.READ)
         // Validate max-keys argument explicitly so the SDK gets InvalidArgument
         // rather than silently clamped pagination.
         if (maxKeys < 0) {
@@ -225,6 +375,43 @@ class S3Handlers(
         call.respondText(body, ContentType.Application.Xml.withCharset(Charsets.UTF_8), HttpStatusCode.OK)
     }
 
+    suspend fun listObjectVersions(
+        call: ApplicationCall,
+        bucket: String,
+        prefix: String?,
+    ) = withContext(Dispatchers.IO) {
+        requireBucket(call, bucket, BucketPermission.READ)
+        val versions = withS3 { config.database.withConnection { conn -> repo.listObjectVersions(conn, bucket, prefix) } }
+        val body =
+            s3XmlDocument("ListVersionsResult") {
+                s3Tag("Name", bucket)
+                s3Tag("Prefix", prefix ?: "")
+                s3TagLong("MaxKeys", 1000)
+                s3TagBool("IsTruncated", false)
+                versions.forEach { version ->
+                    if (version.isDeleteMarker) {
+                        s3Open("DeleteMarker")
+                        s3Tag("Key", version.key)
+                        s3Tag("VersionId", version.versionId)
+                        s3TagBool("IsLatest", version.isLatest)
+                        s3Tag("LastModified", S3Time.formatIso8601(version.lastModified))
+                        s3Close("DeleteMarker")
+                    } else {
+                        s3Open("Version")
+                        s3Tag("Key", version.key)
+                        s3Tag("VersionId", version.versionId)
+                        s3TagBool("IsLatest", version.isLatest)
+                        version.etag?.let { s3Tag("ETag", it) }
+                        s3TagLong("Size", version.sizeBytes)
+                        s3Tag("StorageClass", version.storageClass)
+                        s3Tag("LastModified", S3Time.formatIso8601(version.lastModified))
+                        s3Close("Version")
+                    }
+                }
+            }
+        call.respondText(body, ContentType.Application.Xml.withCharset(Charsets.UTF_8), HttpStatusCode.OK)
+    }
+
     // ---------- Object ----------
 
     suspend fun putObject(
@@ -251,6 +438,7 @@ class S3Handlers(
     ) = withUploadPermit {
         BucketName.validate(bucket)
         ObjectKey.validate(key)
+        authz.require(call, bucket, BucketPermission.WRITE)
 
         // ---- Content-Length validation (M2) ----
         // AWS accepts PUTs without Content-Length when HTTP transfer chunking is
@@ -273,12 +461,13 @@ class S3Handlers(
             throw S3Errors.invalidArgument("x-amz-storage-class", effectiveStorageClass, "must be one of $ALLOWED_STORAGE_CLASSES")
         }
 
-        // ---- Bucket existence check ----
-        withS3 {
-            config.database.withConnection { conn ->
-                if (!repo.bucketExists(conn, bucket)) throw S3Errors.noSuchBucket(bucket)
+        // ---- Bucket existence and governance state ----
+        val bucketInfo =
+            withS3 {
+                config.database.withConnection { conn ->
+                    repo.getBucket(conn, bucket) ?: throw S3Errors.noSuchBucket(bucket)
+                }
             }
-        }
 
         // ---- If-None-Match: * conditional PUT (create-only-if-absent) ----
         if (ifNoneMatch != null) {
@@ -382,7 +571,7 @@ class S3Handlers(
                     contentDisposition = contentDisposition,
                     expires = expires,
                     userMetadata = userMetadata,
-                    versionId = "null",
+                    versionId = newObjectVersionId(bucketInfo),
                     storageClass = effectiveStorageClass,
                     createdAt = Instant.now(),
                     checksumCrc32 = checksumCrc32,
@@ -403,6 +592,8 @@ class S3Handlers(
                     encryptionMode = stored.encryptionMode,
                     encryptionKeyId = stored.encryptionKeyId,
                     encryptionNonce = stored.encryptionNonce,
+                    retentionMode = defaultRetentionMode(bucketInfo),
+                    retainUntil = defaultRetainUntil(bucketInfo),
                 )
             withS3 {
                 config.database.withTransaction { conn ->
@@ -430,6 +621,7 @@ class S3Handlers(
                 if (meta.encryptionMode == app.silofs.blob.ObjectEncryption.SSE_S3_MODE) {
                     append("x-amz-server-side-encryption", "AES256")
                 }
+                appendVersionId(call, meta)
             }
             call.respondText("", ContentType.Application.Xml.withCharset(Charsets.UTF_8), HttpStatusCode.OK)
         } catch (t: Throwable) {
@@ -483,6 +675,8 @@ class S3Handlers(
         val srcKey = raw.substring(slashIdx + 1)
         BucketName.validate(srcBucket)
         ObjectKey.validate(srcKey)
+        authz.require(call, srcBucket, BucketPermission.READ)
+        authz.require(call, destBucket, BucketPermission.WRITE)
 
         val effectiveDirective =
             metadataDirective.uppercase(Locale.US).let {
@@ -497,12 +691,12 @@ class S3Handlers(
             throw S3Errors.invalidArgument("x-amz-storage-class", effectiveStorageClass, "must be one of $ALLOWED_STORAGE_CLASSES")
         }
 
-        val srcMeta =
+        val (destInfo, srcMeta) =
             withS3 {
                 config.database.withConnection { conn ->
-                    if (!repo.bucketExists(conn, destBucket)) throw S3Errors.noSuchBucket(destBucket)
+                    val destInfo = repo.getBucket(conn, destBucket) ?: throw S3Errors.noSuchBucket(destBucket)
                     if (!repo.bucketExists(conn, srcBucket)) throw S3Errors.noSuchBucket(srcBucket)
-                    repo.getObject(conn, srcBucket, srcKey) ?: throw S3Errors.noSuchKey(srcBucket, srcKey)
+                    destInfo to (repo.getObject(conn, srcBucket, srcKey) ?: throw S3Errors.noSuchKey(srcBucket, srcKey))
                 }
             }
 
@@ -590,7 +784,7 @@ class S3Handlers(
                     contentDisposition = cm.contentDisposition,
                     expires = cm.expires,
                     userMetadata = cm.userMetadata,
-                    versionId = "null",
+                    versionId = newObjectVersionId(destInfo),
                     storageClass = effectiveStorageClass,
                     createdAt = Instant.now(),
                     checksumCrc32 = srcMeta.checksumCrc32,
@@ -601,6 +795,8 @@ class S3Handlers(
                     encryptionMode = stored.encryptionMode,
                     encryptionKeyId = stored.encryptionKeyId,
                     encryptionNonce = stored.encryptionNonce,
+                    retentionMode = defaultRetentionMode(destInfo),
+                    retainUntil = defaultRetainUntil(destInfo),
                 )
             withS3 {
                 config.database.withTransaction { conn ->
@@ -620,6 +816,7 @@ class S3Handlers(
                 if (meta.encryptionMode == app.silofs.blob.ObjectEncryption.SSE_S3_MODE) {
                     append("x-amz-server-side-encryption", "AES256")
                 }
+                appendVersionId(call, meta)
             }
             call.respondText(body, ContentType.Application.Xml.withCharset(Charsets.UTF_8), HttpStatusCode.OK)
         } catch (t: Throwable) {
@@ -637,15 +834,21 @@ class S3Handlers(
         rangeHeader: String?,
         ifMatch: String?,
         ifNoneMatch: String?,
+        versionId: String?,
     ) = withContext(Dispatchers.IO) {
         BucketName.validate(bucket)
         ObjectKey.validate(key)
+        authz.require(call, bucket, BucketPermission.READ)
 
         val meta =
             withS3 {
                 config.database.withConnection { conn ->
                     if (!repo.bucketExists(conn, bucket)) throw S3Errors.noSuchBucket(bucket)
-                    repo.getObject(conn, bucket, key) ?: throw S3Errors.noSuchKey(bucket, key)
+                    if (versionId == null) {
+                        repo.getObject(conn, bucket, key)
+                    } else {
+                        repo.getObjectVersion(conn, bucket, key, versionId)
+                    } ?: throw S3Errors.noSuchKey(bucket, key)
                 }
             }
 
@@ -687,6 +890,7 @@ class S3Handlers(
             if (meta.encryptionMode == app.silofs.blob.ObjectEncryption.SSE_S3_MODE) {
                 append("x-amz-server-side-encryption", "AES256")
             }
+            appendVersionId(call, meta)
             // Echo user metadata exactly as AWS does: lowercase the header name
             // but preserve the value verbatim.
             meta.userMetadata.forEach { (k, v) ->
@@ -729,15 +933,21 @@ class S3Handlers(
         key: String,
         ifMatch: String?,
         ifNoneMatch: String?,
+        versionId: String?,
     ) = withContext(Dispatchers.IO) {
         BucketName.validate(bucket)
         ObjectKey.validate(key)
+        authz.require(call, bucket, BucketPermission.READ)
 
         val meta =
             withS3 {
                 config.database.withConnection { conn ->
                     if (!repo.bucketExists(conn, bucket)) throw S3Errors.noSuchBucket(bucket)
-                    repo.getObject(conn, bucket, key) ?: throw S3Errors.noSuchKey(bucket, key)
+                    if (versionId == null) {
+                        repo.getObject(conn, bucket, key)
+                    } else {
+                        repo.getObjectVersion(conn, bucket, key, versionId)
+                    } ?: throw S3Errors.noSuchKey(bucket, key)
                 }
             }
 
@@ -770,6 +980,7 @@ class S3Handlers(
             if (meta.encryptionMode == app.silofs.blob.ObjectEncryption.SSE_S3_MODE) {
                 append("x-amz-server-side-encryption", "AES256")
             }
+            appendVersionId(call, meta)
             meta.userMetadata.forEach { (k, v) ->
                 append("x-amz-meta-" + k.lowercase(Locale.US), v)
             }
@@ -793,14 +1004,34 @@ class S3Handlers(
         call: ApplicationCall,
         bucket: String,
         key: String,
+        versionId: String?,
     ) = withContext(Dispatchers.IO) {
         BucketName.validate(bucket)
         ObjectKey.validate(key)
+        authz.require(call, bucket, BucketPermission.WRITE)
 
         withS3 {
             config.database.withTransaction { conn ->
-                if (!repo.bucketExists(conn, bucket)) throw S3Errors.noSuchBucket(bucket)
-                repo.deleteObject(conn, bucket, key)
+                val info = repo.getBucket(conn, bucket) ?: throw S3Errors.noSuchBucket(bucket)
+                when {
+                    versionId != null -> {
+                        if (!repo.deleteObjectVersion(conn, bucket, key, versionId, Instant.now())) {
+                            throw S3Exception(S3ErrorCode.AccessDenied, "object version is retained, locked, or missing")
+                        }
+                        call.response.headers.append("x-amz-version-id", versionId)
+                    }
+                    info.versioningStatus == "ENABLED" -> {
+                        val marker = repo.createDeleteMarker(conn, bucket, key, newVersionId())
+                        call.response.headers.append("x-amz-delete-marker", "true")
+                        call.response.headers.append("x-amz-version-id", marker.versionId)
+                    }
+                    else -> {
+                        val current = repo.getObject(conn, bucket, key)
+                        if (current != null && !repo.deleteObjectVersion(conn, bucket, key, current.versionId, Instant.now())) {
+                            throw S3Exception(S3ErrorCode.AccessDenied, "object is retained or under legal hold")
+                        }
+                    }
+                }
                 // We do NOT delete the blob here — the recovery sweep will GC
                 // unreferenced blobs. This keeps the delete atomic.
             }
@@ -816,6 +1047,7 @@ class S3Handlers(
         request: DeleteObjectsRequest,
     ) = withContext(Dispatchers.IO) {
         BucketName.validate(bucket)
+        authz.require(call, bucket, BucketPermission.WRITE)
 
         val errors = ArrayList<Pair<String, S3Exception>>()
         val deleted = ArrayList<String>()
@@ -854,10 +1086,130 @@ class S3Handlers(
         call.respondText(xml, ContentType.Application.Xml.withCharset(Charsets.UTF_8), HttpStatusCode.OK)
     }
 
+    suspend fun getObjectRetention(
+        call: ApplicationCall,
+        bucket: String,
+        key: String,
+        versionId: String?,
+    ) = withContext(Dispatchers.IO) {
+        val meta = requireObject(call, bucket, key, versionId, BucketPermission.READ)
+        val body =
+            s3XmlDocument("Retention") {
+                meta.retentionMode?.let { s3Tag("Mode", it) }
+                meta.retainUntil?.let { s3Tag("RetainUntilDate", S3Time.formatIso8601(it)) }
+            }
+        call.respondText(body, ContentType.Application.Xml.withCharset(Charsets.UTF_8), HttpStatusCode.OK)
+    }
+
+    suspend fun putObjectRetention(
+        call: ApplicationCall,
+        bucket: String,
+        key: String,
+        versionId: String?,
+        body: String,
+    ) = withContext(Dispatchers.IO) {
+        val (mode, retainUntil) = GovernanceXml.parseRetention(body)
+        val meta = requireObject(call, bucket, key, versionId, BucketPermission.WRITE)
+        withS3 {
+            config.database.withTransaction { conn ->
+                if (!repo.putRetention(conn, bucket, key, meta.versionId, mode, retainUntil)) {
+                    throw S3Errors.noSuchKey(bucket, key)
+                }
+            }
+        }
+        call.respondText("", ContentType.Application.Xml.withCharset(Charsets.UTF_8), HttpStatusCode.OK)
+    }
+
+    suspend fun getObjectLegalHold(
+        call: ApplicationCall,
+        bucket: String,
+        key: String,
+        versionId: String?,
+    ) = withContext(Dispatchers.IO) {
+        val meta = requireObject(call, bucket, key, versionId, BucketPermission.READ)
+        val body =
+            s3XmlDocument("LegalHold") {
+                s3Tag("Status", if (meta.legalHold) "ON" else "OFF")
+            }
+        call.respondText(body, ContentType.Application.Xml.withCharset(Charsets.UTF_8), HttpStatusCode.OK)
+    }
+
+    suspend fun putObjectLegalHold(
+        call: ApplicationCall,
+        bucket: String,
+        key: String,
+        versionId: String?,
+        body: String,
+    ) = withContext(Dispatchers.IO) {
+        val enabled = GovernanceXml.parseLegalHold(body)
+        val meta = requireObject(call, bucket, key, versionId, BucketPermission.WRITE)
+        withS3 {
+            config.database.withTransaction { conn ->
+                if (!repo.putLegalHold(conn, bucket, key, meta.versionId, enabled)) {
+                    throw S3Errors.noSuchKey(bucket, key)
+                }
+            }
+        }
+        call.respondText("", ContentType.Application.Xml.withCharset(Charsets.UTF_8), HttpStatusCode.OK)
+    }
+
     private data class PublishedBlob(
         val stored: app.silofs.blob.StoredBlob,
         val intentId: String,
     )
+
+    private fun newObjectVersionId(bucket: BucketInfo): String = if (bucket.versioningStatus == "ENABLED") newVersionId() else "null"
+
+    private fun newVersionId(): String = UUID.randomUUID().toString()
+
+    private fun defaultRetentionMode(bucket: BucketInfo): String? =
+        bucket.defaultRetentionMode?.takeIf { bucket.objectLockEnabled && bucket.defaultRetentionDays != null }
+
+    private fun defaultRetainUntil(bucket: BucketInfo): Instant? =
+        bucket.defaultRetentionDays
+            ?.takeIf { bucket.objectLockEnabled && bucket.defaultRetentionMode != null }
+            ?.let { Instant.now().plus(it.toLong(), ChronoUnit.DAYS) }
+
+    private fun appendVersionId(
+        call: ApplicationCall,
+        meta: ObjectMetadata,
+    ) {
+        if (meta.versionId != "null") call.response.headers.append("x-amz-version-id", meta.versionId)
+    }
+
+    private fun requireBucket(
+        call: ApplicationCall,
+        bucket: String,
+        permission: BucketPermission,
+    ): BucketInfo {
+        BucketName.validate(bucket)
+        authz.require(call, bucket, permission)
+        return withS3 {
+            config.database.withConnection { conn -> repo.getBucket(conn, bucket) ?: throw S3Errors.noSuchBucket(bucket) }
+        }
+    }
+
+    private fun requireObject(
+        call: ApplicationCall,
+        bucket: String,
+        key: String,
+        versionId: String?,
+        permission: BucketPermission,
+    ): ObjectMetadata {
+        BucketName.validate(bucket)
+        ObjectKey.validate(key)
+        authz.require(call, bucket, permission)
+        return withS3 {
+            config.database.withConnection { conn ->
+                if (!repo.bucketExists(conn, bucket)) throw S3Errors.noSuchBucket(bucket)
+                if (versionId == null) {
+                    repo.getObject(conn, bucket, key)
+                } else {
+                    repo.getObjectVersion(conn, bucket, key, versionId)
+                } ?: throw S3Errors.noSuchKey(bucket, key)
+            }
+        }
+    }
 
     private suspend fun <T> withUploadPermit(block: suspend () -> T): T =
         config.operationalState.withUploadPermit {

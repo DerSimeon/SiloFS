@@ -52,7 +52,10 @@ class S3ServerCrashRecoveryTest {
             // --- Phase 1: write object ---
             val db1 = Database.fromUrl(dbUrl, dbUser, dbPass)
             val repo1 = JdbcMetadataRepository()
-            db1.withConnection { c -> repo1.upsertAccessKey(c, ACCESS_KEY, SECRET_KEY, "k") }
+            db1.withConnection { c ->
+                repo1.upsertAccessKey(c, ACCESS_KEY, SECRET_KEY, "k")
+                repo1.grantBucketPermission(c, ACCESS_KEY, "*", "ADMIN")
+            }
             val blob1 = FsBlobStore(dataDir)
             val config1 =
                 ServerConfig(

@@ -74,6 +74,7 @@ class M6CompatibilityTest {
         val repo = JdbcMetadataRepository()
         database.withConnection { conn ->
             repo.upsertAccessKey(conn, ACCESS_KEY, SECRET_KEY, "compatibility test key")
+            repo.grantBucketPermission(conn, ACCESS_KEY, "*", "ADMIN")
         }
         val config =
             ServerConfig(

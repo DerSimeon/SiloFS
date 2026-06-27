@@ -59,7 +59,21 @@ fun Application.s3Routes(
         route("/{bucket}") {
             put {
                 val bucket = call.parameters["bucket"]!!
-                handlers.createBucket(call, bucket)
+                when {
+                    call.request.queryParameters["versioning"] != null -> {
+                        val body = call.receiveBoundedText(config.operationalConfig.completeXmlMaxBytes)
+                        handlers.putBucketVersioning(call, bucket, body)
+                    }
+                    call.request.queryParameters["lifecycle"] != null -> {
+                        val body = call.receiveBoundedText(config.operationalConfig.completeXmlMaxBytes)
+                        handlers.putBucketLifecycle(call, bucket, body)
+                    }
+                    call.request.queryParameters["object-lock"] != null -> {
+                        val body = call.receiveBoundedText(config.operationalConfig.completeXmlMaxBytes)
+                        handlers.putBucketObjectLock(call, bucket, body)
+                    }
+                    else -> handlers.createBucket(call, bucket)
+                }
             }
             head {
                 val bucket = call.parameters["bucket"]!!
@@ -67,7 +81,11 @@ fun Application.s3Routes(
             }
             delete {
                 val bucket = call.parameters["bucket"]!!
-                handlers.deleteBucket(call, bucket)
+                if (call.request.queryParameters["lifecycle"] != null) {
+                    handlers.deleteBucketLifecycle(call, bucket)
+                } else {
+                    handlers.deleteBucket(call, bucket)
+                }
             }
             post {
                 val bucket = call.parameters["bucket"]!!
@@ -78,6 +96,18 @@ fun Application.s3Routes(
                 when {
                     call.request.queryParameters["location"] != null -> {
                         handlers.getBucketLocation(call, bucket)
+                    }
+                    call.request.queryParameters["versioning"] != null -> {
+                        handlers.getBucketVersioning(call, bucket)
+                    }
+                    call.request.queryParameters["versions"] != null -> {
+                        handlers.listObjectVersions(call, bucket, call.request.queryParameters["prefix"])
+                    }
+                    call.request.queryParameters["lifecycle"] != null -> {
+                        handlers.getBucketLifecycle(call, bucket)
+                    }
+                    call.request.queryParameters["object-lock"] != null -> {
+                        handlers.getBucketObjectLock(call, bucket)
                     }
                     call.request.queryParameters["uploads"] != null -> {
                         // ListMultipartUploads
@@ -117,7 +147,21 @@ fun Application.s3Routes(
         route("/{bucket}/") {
             put {
                 val bucket = call.parameters["bucket"]!!
-                handlers.createBucket(call, bucket)
+                when {
+                    call.request.queryParameters["versioning"] != null -> {
+                        val body = call.receiveBoundedText(config.operationalConfig.completeXmlMaxBytes)
+                        handlers.putBucketVersioning(call, bucket, body)
+                    }
+                    call.request.queryParameters["lifecycle"] != null -> {
+                        val body = call.receiveBoundedText(config.operationalConfig.completeXmlMaxBytes)
+                        handlers.putBucketLifecycle(call, bucket, body)
+                    }
+                    call.request.queryParameters["object-lock"] != null -> {
+                        val body = call.receiveBoundedText(config.operationalConfig.completeXmlMaxBytes)
+                        handlers.putBucketObjectLock(call, bucket, body)
+                    }
+                    else -> handlers.createBucket(call, bucket)
+                }
             }
             head {
                 val bucket = call.parameters["bucket"]!!
@@ -125,7 +169,11 @@ fun Application.s3Routes(
             }
             delete {
                 val bucket = call.parameters["bucket"]!!
-                handlers.deleteBucket(call, bucket)
+                if (call.request.queryParameters["lifecycle"] != null) {
+                    handlers.deleteBucketLifecycle(call, bucket)
+                } else {
+                    handlers.deleteBucket(call, bucket)
+                }
             }
             post {
                 val bucket = call.parameters["bucket"]!!
@@ -136,6 +184,18 @@ fun Application.s3Routes(
                 when {
                     call.request.queryParameters["location"] != null -> {
                         handlers.getBucketLocation(call, bucket)
+                    }
+                    call.request.queryParameters["versioning"] != null -> {
+                        handlers.getBucketVersioning(call, bucket)
+                    }
+                    call.request.queryParameters["versions"] != null -> {
+                        handlers.listObjectVersions(call, bucket, call.request.queryParameters["prefix"])
+                    }
+                    call.request.queryParameters["lifecycle"] != null -> {
+                        handlers.getBucketLifecycle(call, bucket)
+                    }
+                    call.request.queryParameters["object-lock"] != null -> {
+                        handlers.getBucketObjectLock(call, bucket)
                     }
                     call.request.queryParameters["uploads"] != null -> {
                         val prefix = call.request.queryParameters["prefix"]
@@ -227,6 +287,17 @@ fun Application.s3Routes(
             put {
                 val bucket = call.parameters["bucket"]!!
                 val decodedKey = ObjectKey.fromPathSegment(joinPath(call.parameters.getAll("key") ?: emptyList()))
+
+                if (call.request.queryParameters["retention"] != null) {
+                    val body = call.receiveBoundedText(config.operationalConfig.completeXmlMaxBytes)
+                    handlers.putObjectRetention(call, bucket, decodedKey, call.request.queryParameters["versionId"], body)
+                    return@put
+                }
+                if (call.request.queryParameters["legal-hold"] != null) {
+                    val body = call.receiveBoundedText(config.operationalConfig.completeXmlMaxBytes)
+                    handlers.putObjectLegalHold(call, bucket, decodedKey, call.request.queryParameters["versionId"], body)
+                    return@put
+                }
 
                 // ---- UploadPart detection: ?partNumber + ?uploadId ----
                 val uploadId = call.request.queryParameters["uploadId"]
@@ -384,7 +455,7 @@ fun Application.s3Routes(
                 val decodedKey = ObjectKey.fromPathSegment(joinPath(call.parameters.getAll("key") ?: emptyList()))
                 val ifMatch = call.request.headers[HttpHeaders.IfMatch]
                 val ifNoneMatch = call.request.headers[HttpHeaders.IfNoneMatch]
-                handlers.headObject(call, bucket, decodedKey, ifMatch, ifNoneMatch)
+                handlers.headObject(call, bucket, decodedKey, ifMatch, ifNoneMatch, call.request.queryParameters["versionId"])
             }
             get {
                 val bucket = call.parameters["bucket"]!!
@@ -395,10 +466,18 @@ fun Application.s3Routes(
                     multipart.listParts(call, bucket, decodedKey, uploadId)
                     return@get
                 }
+                if (call.request.queryParameters["retention"] != null) {
+                    handlers.getObjectRetention(call, bucket, decodedKey, call.request.queryParameters["versionId"])
+                    return@get
+                }
+                if (call.request.queryParameters["legal-hold"] != null) {
+                    handlers.getObjectLegalHold(call, bucket, decodedKey, call.request.queryParameters["versionId"])
+                    return@get
+                }
                 val range = call.request.headers[HttpHeaders.Range]
                 val ifMatch = call.request.headers[HttpHeaders.IfMatch]
                 val ifNoneMatch = call.request.headers[HttpHeaders.IfNoneMatch]
-                handlers.getObject(call, bucket, decodedKey, range, ifMatch, ifNoneMatch)
+                handlers.getObject(call, bucket, decodedKey, range, ifMatch, ifNoneMatch, call.request.queryParameters["versionId"])
             }
             delete {
                 val bucket = call.parameters["bucket"]!!
@@ -409,7 +488,7 @@ fun Application.s3Routes(
                     multipart.abortMultipartUpload(call, bucket, decodedKey, uploadId)
                     return@delete
                 }
-                handlers.deleteObject(call, bucket, decodedKey)
+                handlers.deleteObject(call, bucket, decodedKey, call.request.queryParameters["versionId"])
             }
         }
     }

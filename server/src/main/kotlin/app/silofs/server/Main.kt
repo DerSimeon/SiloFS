@@ -39,6 +39,17 @@ fun main(args: Array<String>) {
         } else {
             null
         }
+    val lifecycle =
+        LifecycleJob(
+            database = config.database,
+            repository = config.repository,
+            config = config.lifecycleConfig,
+        ).also {
+            if (config.lifecycleConfig.enabled) {
+                it.runOnce()
+                it.start()
+            }
+        }
 
     val server =
         embeddedServer(
@@ -64,6 +75,7 @@ fun main(args: Array<String>) {
                 )
             }
             recovery?.close()
+            lifecycle.close()
             config.database.close()
         },
     )

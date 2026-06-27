@@ -63,6 +63,50 @@ class S3ServerAdminTest {
         assertEquals(0, runAdminCommand(arrayOf("admin", "access-key", "delete", "AKIAADMINTEST0001"), config.copyForCommand()))
     }
 
+    @Test
+    fun `admin grant commands succeed`() {
+        val config = newConfig()
+        config.database.withConnection { conn ->
+            config.repository.upsertAccessKey(conn, "AKIAGRANTTEST0001", "secret", "grant test")
+        }
+
+        assertEquals(
+            0,
+            runAdminCommand(
+                arrayOf(
+                    "admin",
+                    "grant",
+                    "add",
+                    "--access-key-id",
+                    "AKIAGRANTTEST0001",
+                    "--bucket",
+                    "photos",
+                    "--permission",
+                    "READ",
+                ),
+                config.copyForCommand(),
+            ),
+        )
+        assertEquals(0, runAdminCommand(arrayOf("admin", "grant", "list", "--access-key-id", "AKIAGRANTTEST0001"), config.copyForCommand()))
+        assertEquals(
+            0,
+            runAdminCommand(
+                arrayOf(
+                    "admin",
+                    "grant",
+                    "remove",
+                    "--access-key-id",
+                    "AKIAGRANTTEST0001",
+                    "--bucket",
+                    "photos",
+                    "--permission",
+                    "READ",
+                ),
+                config.copyForCommand(),
+            ),
+        )
+    }
+
     private fun newConfig(): ServerConfig {
         pg.start()
         val dataDir = Files.createTempDirectory("silofs-admin-test")
