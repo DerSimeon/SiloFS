@@ -1,6 +1,6 @@
 package app.silofs.test
 
-import app.silofs.metadata.AccessKeyRecord
+import app.silofs.server.accessKeyRecordForSecret
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
@@ -18,7 +18,10 @@ class S3ServerSecurityTest : AbstractS3ServerTest() {
         val accessKey = "AKIATESTDISABLED001"
         val secret = "disabledSecretForIntegration000000000000"
         database.withConnection { conn ->
-            Jdbc.repo.upsertAccessKeyRecord(conn, AccessKeyRecord(accessKey, secret, description = "disabled test"))
+            Jdbc.repo.upsertAccessKeyRecord(
+                conn,
+                accessKeyRecordForSecret(accessKey, secret, "disabled test", securityConfig),
+            )
         }
         newClient(accessKey, secret).use { it.listBuckets() }
 
@@ -41,12 +44,18 @@ class S3ServerSecurityTest : AbstractS3ServerTest() {
         val oldSecret = "oldSecretForIntegration0000000000000000"
         val newSecret = "newSecretForIntegration0000000000000000"
         database.withConnection { conn ->
-            Jdbc.repo.upsertAccessKeyRecord(conn, AccessKeyRecord(accessKey, oldSecret, description = "rotate test"))
+            Jdbc.repo.upsertAccessKeyRecord(
+                conn,
+                accessKeyRecordForSecret(accessKey, oldSecret, "rotate test", securityConfig),
+            )
         }
         newClient(accessKey, oldSecret).use { it.listBuckets() }
 
         database.withConnection { conn ->
-            Jdbc.repo.upsertAccessKeyRecord(conn, AccessKeyRecord(accessKey, newSecret, description = "rotate test"))
+            Jdbc.repo.upsertAccessKeyRecord(
+                conn,
+                accessKeyRecordForSecret(accessKey, newSecret, "rotate test", securityConfig),
+            )
         }
 
         newClient(accessKey, oldSecret).use { client ->

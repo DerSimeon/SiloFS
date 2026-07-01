@@ -471,7 +471,7 @@ Known gaps after M10 compatibility expansion:
 
 Harden authentication, request validation, secret handling, and data protection.
 
-Status: complete for authentication/request hardening in the single-node envelope. Access keys now have lifecycle state, optional AES-GCM encrypted secret storage, DB-backed lookup without restart, per-access-key rate limiting, audit events for mutating operations, opt-in CORS, presigned query redaction, and documented TLS/security boundaries.
+Status: complete for authentication/request hardening in the single-node envelope. Access keys now have lifecycle state, mandatory AES-GCM encrypted secret storage, DB-backed lookup without restart, per-access-key rate limiting, audit events for mutating operations, opt-in CORS, presigned query redaction, and documented TLS/security boundaries.
 
 Deliverables:
 
@@ -769,7 +769,8 @@ binaries, Debian packages, and Cloudsmith apt publishing.
 
 Deliverables:
 
-- tag-triggered release workflow for `v*.*.*`
+- automatic release after successful `main` CI when `VERSION` has been bumped
+- manual release dispatch and tag-triggered release workflow for `v*.*.*`
 - CLI Linux binaries for `amd64` and `arm64`
 - Debian package `silofs` installing `/usr/bin/silofs`
 - SHA-256 checksums

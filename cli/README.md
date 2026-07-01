@@ -29,4 +29,8 @@ silofs admin check-blobs --data-dir /var/lib/silofs/data
 silofs admin grant add --access-key-id AKIA... --bucket photos --permission READ
 ```
 
+Access-key create and rotate commands require `SILOS_ACCESS_KEY_SECRET_ENCRYPTION_KEY`
+or `S3_ACCESS_KEY_SECRET_ENCRYPTION_KEY`. The generated secret is printed once;
+the database stores only encrypted secret material.
+
 `admin repair` and `admin gc` intentionally require `--dry-run`; M10 does not perform mutating repair or GC from the CLI.

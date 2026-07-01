@@ -23,11 +23,14 @@ data class SecurityConfig(
         require(secretEncryptionKey == null || secretEncryptionKey.size == 32) {
             "S3_ACCESS_KEY_SECRET_ENCRYPTION_KEY must decode to exactly 32 bytes"
         }
+        require(secretEncryptionKey != null) {
+            "S3_ACCESS_KEY_SECRET_ENCRYPTION_KEY is required; access-key secrets are always stored encrypted"
+        }
+        require(requireEncryptedSecrets) {
+            "access-key secret encryption is mandatory"
+        }
         require(rateLimitPerAccessKeyRps >= 0) { "S3_RATE_LIMIT_PER_ACCESS_KEY_RPS must be >= 0" }
         require(rateLimitPerAccessKeyBurst > 0) { "S3_RATE_LIMIT_PER_ACCESS_KEY_BURST must be > 0" }
-        require(!requireEncryptedSecrets || secretEncryptionKey != null) {
-            "S3_REQUIRE_ENCRYPTED_SECRETS=true requires S3_ACCESS_KEY_SECRET_ENCRYPTION_KEY"
-        }
     }
 
     val secretCodec: AccessKeySecretCodec? =
@@ -41,7 +44,7 @@ data class SecurityConfig(
                         .getenv("S3_ACCESS_KEY_SECRET_ENCRYPTION_KEY")
                         ?.takeIf { it.isNotBlank() }
                         ?.let { Base64.getDecoder().decode(it) },
-                requireEncryptedSecrets = envOrDefault("S3_REQUIRE_ENCRYPTED_SECRETS", "false").toBoolean(),
+                requireEncryptedSecrets = true,
                 corsAllowedOrigins =
                     envOrDefault("S3_CORS_ALLOWED_ORIGINS", "")
                         .split(',')
@@ -119,8 +122,7 @@ fun AccessKeyRecord.secretForAuth(securityConfig: SecurityConfig): String? {
     if (ciphertext != null && nonce != null && securityConfig.secretCodec != null) {
         return securityConfig.secretCodec.decrypt(accessKeyId, ciphertext, nonce)
     }
-    if (securityConfig.requireEncryptedSecrets) return null
-    return secretAccessKey
+    return null
 }
 
 fun accessKeyRecordForSecret(
@@ -130,13 +132,16 @@ fun accessKeyRecordForSecret(
     securityConfig: SecurityConfig,
     rotated: Boolean = false,
 ): AccessKeyRecord {
-    val encrypted = securityConfig.secretCodec?.encrypt(accessKeyId, secret)
+    val encrypted =
+        requireNotNull(securityConfig.secretCodec) {
+            "S3_ACCESS_KEY_SECRET_ENCRYPTION_KEY is required to store access-key secrets"
+        }.encrypt(accessKeyId, secret)
     return AccessKeyRecord(
         accessKeyId = accessKeyId,
-        secretAccessKey = if (encrypted == null && !securityConfig.requireEncryptedSecrets) secret else null,
-        secretCiphertext = encrypted?.ciphertext,
-        secretNonce = encrypted?.nonce,
-        secretKeyId = encrypted?.keyId,
+        secretAccessKey = null,
+        secretCiphertext = encrypted.ciphertext,
+        secretNonce = encrypted.nonce,
+        secretKeyId = encrypted.keyId,
         description = description,
         state = "ACTIVE",
         rotatedAt = if (rotated) java.time.Instant.now() else null,

@@ -5,7 +5,9 @@ import app.silofs.blob.FsBlobStore
 import app.silofs.metadata.Database
 import app.silofs.metadata.JdbcMetadataRepository
 import app.silofs.server.RecoveryConfig
+import app.silofs.server.SecurityConfig
 import app.silofs.server.ServerConfig
+import app.silofs.server.accessKeyRecordForSecret
 import app.silofs.server.s3Module
 import io.ktor.server.engine.EmbeddedServer
 import io.ktor.server.engine.embeddedServer
@@ -72,8 +74,9 @@ class M6CompatibilityTest {
         dataDir = Files.createTempDirectory("silofs-compat-data")
         database = Database.fromUrl(pg.jdbcUrl, pg.username, pg.password)
         val repo = JdbcMetadataRepository()
+        val securityConfig = testSecurityConfig()
         database.withConnection { conn ->
-            repo.upsertAccessKey(conn, ACCESS_KEY, SECRET_KEY, "compatibility test key")
+            repo.upsertAccessKeyRecord(conn, accessKeyRecordForSecret(ACCESS_KEY, SECRET_KEY, "compatibility test key", securityConfig))
             repo.grantBucketPermission(conn, ACCESS_KEY, "*", "ADMIN")
         }
         val config =
@@ -86,6 +89,7 @@ class M6CompatibilityTest {
                 blobStore = FsBlobStore(dataDir),
                 repository = repo,
                 credentialProvider = StaticCredentialProvider.single(ACCESS_KEY, SECRET_KEY),
+                securityConfig = securityConfig,
                 recoveryConfig =
                     RecoveryConfig(
                         tempMaxAgeSeconds = 1,
@@ -379,5 +383,14 @@ class M6CompatibilityTest {
         private const val SECRET_KEY = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
         private const val REGION = "us-east-1"
         private const val PART_SIZE = 6 * 1024 * 1024
+
+        fun testSecurityConfig(): SecurityConfig =
+            SecurityConfig(
+                secretEncryptionKey = ByteArray(32) { 7 },
+                requireEncryptedSecrets = true,
+                corsAllowedOrigins = emptyList(),
+                rateLimitPerAccessKeyRps = 0,
+                rateLimitPerAccessKeyBurst = 64,
+            )
     }
 }

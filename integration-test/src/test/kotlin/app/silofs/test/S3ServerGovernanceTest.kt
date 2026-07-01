@@ -1,6 +1,7 @@
 package app.silofs.test
 
 import app.silofs.metadata.JdbcMetadataRepository
+import app.silofs.server.accessKeyRecordForSecret
 import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
@@ -47,7 +48,7 @@ class S3ServerGovernanceTest : AbstractS3ServerTest() {
         val readOnlySecret = "readonly-secret"
         database.withConnection { conn ->
             val repo = JdbcMetadataRepository()
-            repo.upsertAccessKey(conn, readOnlyKey, readOnlySecret, "read only")
+            repo.upsertAccessKeyRecord(conn, accessKeyRecordForSecret(readOnlyKey, readOnlySecret, "read only", securityConfig))
             repo.grantBucketPermission(conn, readOnlyKey, bucket, "READ")
         }
 

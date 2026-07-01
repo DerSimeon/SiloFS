@@ -201,10 +201,10 @@ SigV4 is implemented in the `auth` module and exposed as a Ktor
 
 Credentials are loaded from `access_keys` in Postgres. Access-key lifecycle
 state is checked on every request, so disabling, deleting, or rotating a key
-takes effect without restarting the server. Secrets may be stored encrypted
-with AES-GCM when `S3_ACCESS_KEY_SECRET_ENCRYPTION_KEY` is configured; strict
-deployments can set `S3_REQUIRE_ENCRYPTED_SECRETS=true` to reject plaintext
-secret rows.
+takes effect without restarting the server. Secrets are always stored encrypted
+with AES-GCM using `S3_ACCESS_KEY_SECRET_ENCRYPTION_KEY`; create and rotate
+commands print the raw secret once, but the database stores only ciphertext,
+nonce, and key id. The schema rejects plaintext secret rows.
 
 After authentication, bucket authorization checks `access_key_bucket_grants`.
 `READ` permits object reads and listing, `WRITE` permits object and multipart

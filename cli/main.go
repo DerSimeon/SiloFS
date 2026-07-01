@@ -601,7 +601,7 @@ func adminAccessKeyCommand(flags *flagConfig, stdout io.Writer) *cobra.Command {
 		}
 		_, err = conn.Exec(ctx, `INSERT INTO access_keys(access_key_id, secret_access_key, secret_ciphertext, secret_nonce, secret_key_id, description, state, updated_at)
 VALUES ($1,$2,$3,$4,$5,$6,'ACTIVE',now())
-ON CONFLICT (access_key_id) DO UPDATE SET secret_access_key=EXCLUDED.secret_access_key, secret_ciphertext=EXCLUDED.secret_ciphertext, secret_nonce=EXCLUDED.secret_nonce, secret_key_id=EXCLUDED.secret_key_id, description=EXCLUDED.description, state='ACTIVE', updated_at=now(), deleted_at=NULL`, id, plain, ciphertext, nonce, secretKeyID, description)
+ON CONFLICT (access_key_id) DO UPDATE SET secret_access_key=EXCLUDED.secret_access_key, secret_ciphertext=EXCLUDED.secret_ciphertext, secret_nonce=EXCLUDED.secret_nonce, secret_key_id=EXCLUDED.secret_key_id, description=EXCLUDED.description, state='ACTIVE', updated_at=now(), deleted_at=NULL`, id, nullableString(plain), ciphertext, nonce, nullableString(secretKeyID), description)
 		if err != nil {
 			return err
 		}
@@ -751,7 +751,7 @@ func accessKeyRotateCommand(flags *flagConfig, stdout io.Writer) *cobra.Command 
 		if err != nil {
 			return err
 		}
-		tag, err := conn.Exec(ctx, "UPDATE access_keys SET secret_access_key=$1, secret_ciphertext=$2, secret_nonce=$3, secret_key_id=$4, rotated_at=now(), updated_at=now() WHERE access_key_id=$5 AND deleted_at IS NULL", plain, ciphertext, nonce, secretKeyID, args[0])
+		tag, err := conn.Exec(ctx, "UPDATE access_keys SET secret_access_key=$1, secret_ciphertext=$2, secret_nonce=$3, secret_key_id=$4, rotated_at=now(), updated_at=now() WHERE access_key_id=$5 AND deleted_at IS NULL", nullableString(plain), ciphertext, nonce, nullableString(secretKeyID), args[0])
 		if err != nil {
 			return err
 		}
@@ -791,7 +791,7 @@ func accessKeyReencryptCommand(flags *flagConfig, stdout io.Writer) *cobra.Comma
 			if err != nil {
 				return err
 			}
-			if _, err := conn.Exec(ctx, "UPDATE access_keys SET secret_access_key=$1, secret_ciphertext=$2, secret_nonce=$3, secret_key_id=$4, updated_at=now() WHERE access_key_id=$5", plain, ciphertext, nonce, secretKeyID, it.id); err != nil {
+			if _, err := conn.Exec(ctx, "UPDATE access_keys SET secret_access_key=$1, secret_ciphertext=$2, secret_nonce=$3, secret_key_id=$4, updated_at=now() WHERE access_key_id=$5", nullableString(plain), ciphertext, nonce, nullableString(secretKeyID), it.id); err != nil {
 				return err
 			}
 			count++
@@ -1088,9 +1088,16 @@ func nullable(v string) any {
 	return v
 }
 
+func nullableString(v *string) any {
+	if v == nil {
+		return nil
+	}
+	return *v
+}
+
 func encodeSecret(accessKeyID, secret string, cfg appConfig) (plain *string, ciphertext, nonce []byte, keyID *string, err error) {
 	if cfg.SecretKeyB64 == "" {
-		return &secret, nil, nil, nil, nil
+		return nil, nil, nil, nil, errors.New("SILOS_ACCESS_KEY_SECRET_ENCRYPTION_KEY or S3_ACCESS_KEY_SECRET_ENCRYPTION_KEY is required")
 	}
 	key, err := base64.StdEncoding.DecodeString(cfg.SecretKeyB64)
 	if err != nil {

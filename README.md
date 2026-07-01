@@ -64,6 +64,10 @@ sudo apt install silofs
 silofs version
 ```
 
+Releases are automated from the `VERSION` file. A code-changing PR bumps
+`VERSION`; after it is merged and `main` CI passes, GitHub Actions publishes the
+matching GitHub Release, Docker image, Debian packages, and Cloudsmith package.
+
 Default local-development credentials:
 
 ```text
@@ -71,6 +75,11 @@ Access key: AKIAIOSFODNN7EXAMPLE
 Secret key: wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
 Region:     us-east-1
 ```
+
+For local Docker Compose and the default Docker image environment, a
+development-only access-secret encryption key is set for you. For real data,
+replace `S3_ACCESS_KEY_SECRET_ENCRYPTION_KEY` with your own base64 32-byte key
+before starting the server.
 
 More details:
 

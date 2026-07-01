@@ -4,7 +4,9 @@ import app.silofs.auth.StaticCredentialProvider
 import app.silofs.blob.FsBlobStore
 import app.silofs.metadata.Database
 import app.silofs.metadata.JdbcMetadataRepository
+import app.silofs.server.SecurityConfig
 import app.silofs.server.ServerConfig
+import app.silofs.server.accessKeyRecordForSecret
 import app.silofs.server.s3Module
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.netty.Netty
@@ -52,8 +54,9 @@ class S3ServerCrashRecoveryTest {
             // --- Phase 1: write object ---
             val db1 = Database.fromUrl(dbUrl, dbUser, dbPass)
             val repo1 = JdbcMetadataRepository()
+            val securityConfig = testSecurityConfig()
             db1.withConnection { c ->
-                repo1.upsertAccessKey(c, ACCESS_KEY, SECRET_KEY, "k")
+                repo1.upsertAccessKeyRecord(c, accessKeyRecordForSecret(ACCESS_KEY, SECRET_KEY, "k", securityConfig))
                 repo1.grantBucketPermission(c, ACCESS_KEY, "*", "ADMIN")
             }
             val blob1 = FsBlobStore(dataDir)
@@ -67,6 +70,7 @@ class S3ServerCrashRecoveryTest {
                     blobStore = blob1,
                     repository = repo1,
                     credentialProvider = StaticCredentialProvider.single(ACCESS_KEY, SECRET_KEY),
+                    securityConfig = securityConfig,
                     recoveryConfig =
                         app.silofs.server.RecoveryConfig(
                             tempMaxAgeSeconds = 1,
@@ -151,6 +155,7 @@ class S3ServerCrashRecoveryTest {
                     blobStore = blob2,
                     repository = repo2,
                     credentialProvider = StaticCredentialProvider.single(ACCESS_KEY, SECRET_KEY),
+                    securityConfig = securityConfig,
                     recoveryConfig =
                         app.silofs.server.RecoveryConfig(
                             tempMaxAgeSeconds = 1,
@@ -209,4 +214,13 @@ class S3ServerCrashRecoveryTest {
             dataDir.toFile().deleteRecursively()
         }
     }
+
+    private fun testSecurityConfig(): SecurityConfig =
+        SecurityConfig(
+            secretEncryptionKey = ByteArray(32) { 7 },
+            requireEncryptedSecrets = true,
+            corsAllowedOrigins = emptyList(),
+            rateLimitPerAccessKeyRps = 0,
+            rateLimitPerAccessKeyBurst = 64,
+        )
 }

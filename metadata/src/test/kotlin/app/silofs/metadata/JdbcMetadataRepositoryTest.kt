@@ -195,14 +195,13 @@ class JdbcMetadataRepositoryTest {
     }
 
     @Test
-    fun `access keys round trip`() {
+    fun `plaintext access key helper is rejected`() {
         val (db, repo) = newRepo()
         db.use {
             it.withConnection { c ->
-                repo.upsertAccessKey(c, "AKID", "secret", "test key")
-                assertEquals("secret", repo.lookupSecret(c, "AKID"))
-                repo.upsertAccessKey(c, "AKID", "new-secret", "test key")
-                assertEquals("new-secret", repo.lookupSecret(c, "AKID"))
+                assertThrows<UnsupportedOperationException> {
+                    repo.upsertAccessKey(c, "AKID", "secret", "test key")
+                }
                 assertNull(repo.lookupSecret(c, "nope"))
             }
         }
@@ -213,8 +212,8 @@ class JdbcMetadataRepositoryTest {
         val (db, repo) = newRepo()
         db.use {
             it.withConnection { c ->
-                repo.upsertAccessKeyRecord(c, AccessKeyRecord("AKID", "secret", description = "test key"))
-                assertEquals("secret", repo.lookupSecret(c, "AKID"))
+                repo.upsertAccessKeyRecord(c, encryptedAccessKeyRecord("AKID", "test key"))
+                assertNull(repo.lookupSecret(c, "AKID"))
                 assertNotNull(repo.lookupAccessKey(c, "AKID"))
 
                 assertTrue(repo.updateAccessKeyState(c, "AKID", "DISABLED"))
@@ -450,7 +449,7 @@ class JdbcMetadataRepositoryTest {
         val (db, repo) = newRepo()
         db.use {
             it.withConnection { c ->
-                repo.upsertAccessKey(c, "AKID", "secret", "test key")
+                repo.upsertAccessKeyRecord(c, encryptedAccessKeyRecord("AKID", "test key"))
                 repo.createBucket(c, "docs", "us-east-1", "owner")
                 repo.createBucket(c, "logs", "us-east-1", "owner")
 
@@ -565,6 +564,20 @@ class JdbcMetadataRepositoryTest {
             versionId = "null",
             storageClass = "STANDARD",
             createdAt = Instant.now(),
+        )
+
+    private fun encryptedAccessKeyRecord(
+        accessKeyId: String,
+        description: String?,
+    ): AccessKeyRecord =
+        AccessKeyRecord(
+            accessKeyId = accessKeyId,
+            secretAccessKey = null,
+            secretCiphertext = byteArrayOf(1, 2, 3),
+            secretNonce = byteArrayOf(4, 5, 6),
+            secretKeyId = "test-key",
+            description = description,
+            state = "ACTIVE",
         )
 }
 

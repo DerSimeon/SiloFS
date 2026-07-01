@@ -234,7 +234,7 @@ class S3TimeTest {
     @Test
     fun `formats rfc 1123`() {
         val instant = java.time.Instant.parse("2024-06-04T12:34:56Z")
-        assertEquals("Tue, 4 Jun 2024 12:34:56 GMT", S3Time.formatHttpDate(instant))
+        assertEquals("Tue, 04 Jun 2024 12:34:56 GMT", S3Time.formatHttpDate(instant))
     }
 
     @Test

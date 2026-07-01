@@ -70,6 +70,16 @@ func TestEncodeSecretEncrypted(t *testing.T) {
 	}
 }
 
+func TestEncodeSecretRequiresEncryptionKey(t *testing.T) {
+	plain, ciphertext, nonce, keyID, err := encodeSecret("AKIATEST", "secret", appConfig{})
+	if err == nil {
+		t.Fatal("expected missing key error")
+	}
+	if plain != nil || ciphertext != nil || nonce != nil || keyID != nil {
+		t.Fatalf("expected no encoded fields on error")
+	}
+}
+
 func TestRootCommandRoutesVersion(t *testing.T) {
 	var out bytes.Buffer
 	var errOut bytes.Buffer

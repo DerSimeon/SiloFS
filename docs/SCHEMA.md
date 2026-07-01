@@ -10,7 +10,7 @@ applied by Flyway on boot. The schema is normalised around three core tables:
 -- Credentials for SigV4. Single-row in M1, multi-row later.
 CREATE TABLE access_keys (
     access_key_id   TEXT PRIMARY KEY,
-    secret_access_key TEXT NOT NULL,
+    secret_access_key TEXT,
     description     TEXT,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -130,10 +130,11 @@ ALTER TABLE access_keys
     ADD COLUMN rotated_at TIMESTAMPTZ;
 ```
 
-`secret_access_key` becomes nullable. New and rotated keys can store encrypted
-AES-GCM material in `secret_ciphertext` + `secret_nonce` when
-`S3_ACCESS_KEY_SECRET_ENCRYPTION_KEY` is configured. Auth only accepts rows in
-`ACTIVE` state with no `deleted_at`.
+`secret_access_key` becomes nullable in V8 and is rejected for live storage in
+V12. New and rotated keys store encrypted AES-GCM material in
+`secret_ciphertext`, `secret_nonce`, and `secret_key_id` using
+`S3_ACCESS_KEY_SECRET_ENCRYPTION_KEY`. Auth only accepts rows in `ACTIVE` state
+with no `deleted_at`.
 
 V8 also adds `audit_events`, which records mutating S3 requests and admin
 operations with request id, access key id, operation, optional bucket/key,

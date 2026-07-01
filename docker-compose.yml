@@ -30,6 +30,8 @@ services:
       S3_DB_PASSWORD: silofs
       S3_ACCESS_KEY_ID: AKIAIOSFODNN7EXAMPLE
       S3_SECRET_ACCESS_KEY: wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
+      # Development-only key: replace for any persistent or shared data.
+      S3_ACCESS_KEY_SECRET_ENCRYPTION_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     ports:
       - "8080:8080"
     volumes:

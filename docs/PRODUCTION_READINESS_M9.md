@@ -49,7 +49,7 @@ Compatibility:
 
 Security:
 
-- Access keys are metadata-backed, lifecycle-managed, optionally encrypted, and
+- Access keys are metadata-backed, lifecycle-managed, always encrypted, and
   rate-limitable.
 - Mutating operations are audited without secret or presigned-signature leakage.
 - CORS is disabled by default.
@@ -112,10 +112,9 @@ Track:
 ## Unsupported features
 
 - replication, clustering, consensus, and erasure coding.
-- IAM, ACLs, bucket policies, Object Lock, and lifecycle policies.
-- object versioning.
+- IAM, ACLs, and bucket policies.
+- cross-region replication, replication configuration, and S3 Batch Operations.
 - SSE-C, SSE-KMS, and external KMS.
-- virtual-host style addressing.
 - virtual-host style addressing.
 - online write-consistent backups.
 

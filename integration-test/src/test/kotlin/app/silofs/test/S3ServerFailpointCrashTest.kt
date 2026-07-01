@@ -51,6 +51,7 @@ class S3ServerFailpointCrashTest {
     companion object {
         const val ACCESS_KEY = "AKIAIOSFODNN7EXAMPLE"
         const val SECRET_KEY = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+        const val SECRET_ENCRYPTION_KEY = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
         const val REGION = "us-east-1"
     }
 
@@ -59,6 +60,8 @@ class S3ServerFailpointCrashTest {
         val endpoint: String,
         val port: Int,
         val dataDir: Path,
+        val output: StringBuilder,
+        val outputThread: Thread,
     )
 
     private fun startServer(
@@ -90,6 +93,7 @@ class S3ServerFailpointCrashTest {
                 "S3_DB_PASSWORD" to pg.password,
                 "S3_ACCESS_KEY_ID" to ACCESS_KEY,
                 "S3_SECRET_ACCESS_KEY" to SECRET_KEY,
+                "S3_ACCESS_KEY_SECRET_ENCRYPTION_KEY" to SECRET_ENCRYPTION_KEY,
                 "S3_RECOVERY_ENABLED" to "false",
             )
         if (failpoint != null) {
@@ -100,6 +104,8 @@ class S3ServerFailpointCrashTest {
         pb.environment().putAll(env)
         pb.redirectErrorStream(true)
         val process = pb.start()
+        val output = StringBuilder()
+        val outputThread = drainProcessOutput(process, output)
 
         // Wait for the server to be ready
         val deadline = System.currentTimeMillis() + 30_000
@@ -119,11 +125,11 @@ class S3ServerFailpointCrashTest {
             }
         }
         if (!ready) {
-            process.destroyForcibly()
-            error("Server failed to start within 30s")
+            stopProcess(process, outputThread)
+            error("Server failed to start within 30s. Output:\n${outputSnapshot(output)}")
         }
 
-        return RunningServer(process, endpoint, port, dataDir)
+        return RunningServer(process, endpoint, port, dataDir, output, outputThread)
     }
 
     private fun freePort(): Int =
@@ -133,9 +139,48 @@ class S3ServerFailpointCrashTest {
         }
 
     private fun stopServer(server: RunningServer) {
-        server.process.destroyForcibly()
-        server.process.waitFor()
+        stopProcess(server.process, server.outputThread)
     }
+
+    private fun stopProcess(
+        process: Process,
+        outputThread: Thread,
+    ) {
+        if (process.isAlive) {
+            process.destroy()
+            if (!process.waitFor(5, TimeUnit.SECONDS)) {
+                process.destroyForcibly()
+                process.waitFor(5, TimeUnit.SECONDS)
+            }
+        }
+        runCatching { process.inputStream.close() }
+        outputThread.join(1_000)
+    }
+
+    private fun drainProcessOutput(
+        process: Process,
+        output: StringBuilder,
+    ): Thread =
+        Thread {
+            process.inputStream.bufferedReader().useLines { lines ->
+                lines.forEach { line ->
+                    synchronized(output) {
+                        if (output.length < 32_000) {
+                            output.appendLine(line)
+                        }
+                    }
+                }
+            }
+        }.also {
+            it.isDaemon = true
+            it.name = "silofs-failpoint-crash-output-drain"
+            it.start()
+        }
+
+    private fun outputSnapshot(output: StringBuilder): String =
+        synchronized(output) {
+            output.toString()
+        }
 
     private fun assertNoMissingBlobs(
         pg: PostgreSQLContainer<*>,

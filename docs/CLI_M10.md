@@ -99,9 +99,11 @@ unsupported.
 Secrets and presigned signatures are redacted from returned errors. Mutating
 repair and GC are intentionally not exposed; only dry-run reports are supported.
 
-Encrypted access-key secret creation and rotation are compatible with the server
-when `SILOS_ACCESS_KEY_SECRET_ENCRYPTION_KEY` or
-`S3_ACCESS_KEY_SECRET_ENCRYPTION_KEY` is set to a base64 32-byte AES-GCM key.
+Access-key creation, rotation, and reencrypt require
+`SILOS_ACCESS_KEY_SECRET_ENCRYPTION_KEY` or
+`S3_ACCESS_KEY_SECRET_ENCRYPTION_KEY` to be set to a base64 32-byte AES-GCM key.
+The generated raw secret is printed once; the database stores only encrypted
+secret material.
 
 Encrypted object consistency verification decrypts blob headers and ciphertext
 when `SILOS_OBJECT_ENCRYPTION_MASTER_KEY` or

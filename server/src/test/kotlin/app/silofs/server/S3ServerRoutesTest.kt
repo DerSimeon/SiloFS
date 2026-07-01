@@ -294,6 +294,24 @@ class S3ServerRoutesTest {
         org.junit.jupiter.api.assertThrows<IllegalArgumentException> {
             SecurityConfig(
                 secretEncryptionKey = ByteArray(16),
+                requireEncryptedSecrets = true,
+                corsAllowedOrigins = emptyList(),
+                rateLimitPerAccessKeyRps = 0,
+                rateLimitPerAccessKeyBurst = 64,
+            )
+        }
+        org.junit.jupiter.api.assertThrows<IllegalArgumentException> {
+            SecurityConfig(
+                secretEncryptionKey = null,
+                requireEncryptedSecrets = true,
+                corsAllowedOrigins = emptyList(),
+                rateLimitPerAccessKeyRps = 0,
+                rateLimitPerAccessKeyBurst = 64,
+            )
+        }
+        org.junit.jupiter.api.assertThrows<IllegalArgumentException> {
+            SecurityConfig(
+                secretEncryptionKey = ByteArray(32),
                 requireEncryptedSecrets = false,
                 corsAllowedOrigins = emptyList(),
                 rateLimitPerAccessKeyRps = 0,

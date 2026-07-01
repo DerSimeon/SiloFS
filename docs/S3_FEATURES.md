@@ -55,14 +55,14 @@
 | Compatibility matrix | Docker-backed tests pass for the Core 5 path-style matrix plus the M10 extended clients: AWS SDK Kotlin, MinIO `mc`, `rclone`, and `s5cmd`. See `docs/COMPATIBILITY_M6.md`. |
 | Access keys | Metadata-backed access keys with ACTIVE/DISABLED/DELETED lifecycle. DB-backed auth lookup means create/disable/rotate/delete take effect without server restart. |
 | Bucket-scoped grants | Access keys can be granted `READ`, `WRITE`, or `ADMIN` on a bucket or wildcard `*`. Full IAM JSON, S3 ACL APIs, and bucket policies remain unsupported. |
-| Secret storage | Access-key secrets can be stored encrypted with AES-GCM using `S3_ACCESS_KEY_SECRET_ENCRYPTION_KEY`; plaintext dev bootstrap remains available unless `S3_REQUIRE_ENCRYPTED_SECRETS=true`. |
+| Secret storage | Access-key secrets are always stored encrypted with AES-GCM using `S3_ACCESS_KEY_SECRET_ENCRYPTION_KEY`. Create/rotate prints the raw secret once for client configuration, but Postgres stores only ciphertext, nonce, and key id. |
 | Object encryption | Optional SSE-S3-style encryption at rest with AES-GCM when `S3_OBJECT_ENCRYPTION_MODE=sse-s3` and `S3_OBJECT_ENCRYPTION_MASTER_KEY` are configured. New object, copy, multipart-part, and completed multipart blobs are stored encrypted while S3 ETag, checksum, size, range, copy, recovery, GC, backup, and restore semantics remain plaintext-compatible. `GetObject`/`HeadObject` echo `x-amz-server-side-encryption: AES256` for encrypted metadata rows. Existing plaintext blobs remain readable. |
 | Rate limiting | Optional per-access-key rate limiting returns S3 `SlowDown` (503) and exports a rejection counter. |
 | Audit logging | Mutating S3 requests and admin access-key changes are recorded in `audit_events` without secrets or presigned signatures. |
 | CORS | Disabled by default. `S3_CORS_ALLOWED_ORIGINS` enables explicit origins; `*` is accepted only when explicitly configured. |
 | Admin inspection | `silofs admin inspect ...`, `check-blobs`, `storage usage`, `repair --dry-run`, and `gc --dry-run` provide read-only operator visibility. |
 | Backup/restore | Offline/quiesced backup and restore scripts cover PostgreSQL metadata dumps, content-addressed blob copies, manifests, and post-restore consistency verification. |
-| Release automation | Tag pushes `v*.*.*` build CLI Linux binaries, `.deb` packages, GitHub Release assets, a GHCR server image, and Cloudsmith apt packages when Cloudsmith secrets are configured. |
+| Release automation | `VERSION` is the release authority. Code-affecting PRs must bump it; after merge, successful `main` CI publishes `v<VERSION>` automatically if that release does not already exist. Tag pushes and manual dispatch remain supported. |
 
 ## Not supported
 

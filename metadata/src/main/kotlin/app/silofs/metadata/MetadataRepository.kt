@@ -1780,30 +1780,15 @@ class JdbcMetadataRepository : MetadataRepository {
         accessKeyId: String,
         secretAccessKey: String,
         description: String?,
-    ) {
-        upsertAccessKeyRecord(
-            conn,
-            AccessKeyRecord(
-                accessKeyId = accessKeyId,
-                secretAccessKey = secretAccessKey,
-                description = description,
-                state = "ACTIVE",
-            ),
+    ): Unit =
+        throw UnsupportedOperationException(
+            "Plaintext access-key storage is not supported; use upsertAccessKeyRecord with encrypted secret fields",
         )
-    }
 
     override fun lookupSecret(
         conn: Connection,
         accessKeyId: String,
-    ): String? =
-        conn
-            .prepareStatement(
-                "SELECT secret_access_key FROM access_keys " +
-                    "WHERE access_key_id = ? AND state = 'ACTIVE' AND deleted_at IS NULL",
-            ).use { ps ->
-                ps.setString(1, accessKeyId)
-                ps.executeQuery().use { rs -> if (rs.next()) rs.getString(1) else null }
-            }
+    ): String? = null
 
     override fun upsertAccessKeyRecord(
         conn: Connection,

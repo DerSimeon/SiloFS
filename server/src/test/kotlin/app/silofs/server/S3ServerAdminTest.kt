@@ -67,7 +67,10 @@ class S3ServerAdminTest {
     fun `admin grant commands succeed`() {
         val config = newConfig()
         config.database.withConnection { conn ->
-            config.repository.upsertAccessKey(conn, "AKIAGRANTTEST0001", "secret", "grant test")
+            config.repository.upsertAccessKeyRecord(
+                conn,
+                accessKeyRecordForSecret("AKIAGRANTTEST0001", "secret", "grant test", config.securityConfig),
+            )
         }
 
         assertEquals(
@@ -125,7 +128,7 @@ class S3ServerAdminTest {
             repository = repo,
             credentialProvider = StaticCredentialProvider.single("AKID", "secret"),
             recoveryConfig = RecoveryConfig(1, 1, 1, 1, enabled = false),
-            securityConfig = SecurityConfig(null, false, emptyList(), 0, 64),
+            securityConfig = SecurityConfig(ByteArray(32) { 7 }, true, emptyList(), 0, 64),
         )
     }
 

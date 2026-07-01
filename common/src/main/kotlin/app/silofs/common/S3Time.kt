@@ -3,6 +3,7 @@ package app.silofs.common
 import java.time.Instant
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
+import java.util.Locale
 
 /**
  * S3 uses RFC 1123 dates for HTTP-level headers (`Last-Modified`, `Date`) and
@@ -11,7 +12,9 @@ import java.time.format.DateTimeFormatter
  */
 object S3Time {
     private val httpDateFormatter: DateTimeFormatter =
-        DateTimeFormatter.RFC_1123_DATE_TIME.withZone(ZoneOffset.UTC)
+        DateTimeFormatter
+            .ofPattern("EEE, dd MMM yyyy HH:mm:ss 'GMT'", Locale.US)
+            .withZone(ZoneOffset.UTC)
 
     private val iso8601Millis: DateTimeFormatter =
         DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'").withZone(ZoneOffset.UTC)

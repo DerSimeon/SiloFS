@@ -14,6 +14,7 @@ import java.net.URI
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.UUID
+import java.util.concurrent.TimeUnit
 
 /**
  * Real process-kill crash tests (red flag #6).
@@ -43,6 +44,7 @@ class S3ServerProcessCrashTest {
     companion object {
         const val ACCESS_KEY = "AKIAIOSFODNN7EXAMPLE"
         const val SECRET_KEY = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+        const val SECRET_ENCRYPTION_KEY = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
         const val REGION = "us-east-1"
     }
 
@@ -58,6 +60,8 @@ class S3ServerProcessCrashTest {
         val dbUrl: String,
         val dbUser: String,
         val dbPass: String,
+        val output: StringBuilder,
+        val outputThread: Thread,
     )
 
     private fun startServer(
@@ -89,12 +93,15 @@ class S3ServerProcessCrashTest {
                 "S3_DB_PASSWORD" to pg.password,
                 "S3_ACCESS_KEY_ID" to ACCESS_KEY,
                 "S3_SECRET_ACCESS_KEY" to SECRET_KEY,
+                "S3_ACCESS_KEY_SECRET_ENCRYPTION_KEY" to SECRET_ENCRYPTION_KEY,
                 "S3_RECOVERY_ENABLED" to "false",
             )
         val pb = ProcessBuilder(jvmArgs)
         pb.environment().putAll(env)
         pb.redirectErrorStream(true)
         val process = pb.start()
+        val output = StringBuilder()
+        val outputThread = drainProcessOutput(process, output)
 
         // Wait for the server to be ready (poll healthz).
         val deadline = System.currentTimeMillis() + 30_000
@@ -114,20 +121,59 @@ class S3ServerProcessCrashTest {
             }
         }
         if (!ready) {
-            process.destroyForcibly()
+            stopProcess(process, outputThread)
             error(
                 "Server failed to start within 30s. Output:\n" +
-                    process.inputStream.bufferedReader().readText(),
+                    outputSnapshot(output),
             )
         }
 
-        return RunningServer(process, endpoint, port, dataDir, pg.jdbcUrl, pg.username, pg.password)
+        return RunningServer(process, endpoint, port, dataDir, pg.jdbcUrl, pg.username, pg.password, output, outputThread)
     }
 
     private fun stopServer(server: RunningServer) {
-        server.process.destroyForcibly()
-        server.process.waitFor()
+        stopProcess(server.process, server.outputThread)
     }
+
+    private fun stopProcess(
+        process: Process,
+        outputThread: Thread,
+    ) {
+        if (process.isAlive) {
+            process.destroy()
+            if (!process.waitFor(5, TimeUnit.SECONDS)) {
+                process.destroyForcibly()
+                process.waitFor(5, TimeUnit.SECONDS)
+            }
+        }
+        runCatching { process.inputStream.close() }
+        outputThread.join(1_000)
+    }
+
+    private fun drainProcessOutput(
+        process: Process,
+        output: StringBuilder,
+    ): Thread =
+        Thread {
+            process.inputStream.bufferedReader().useLines { lines ->
+                lines.forEach { line ->
+                    synchronized(output) {
+                        if (output.length < 32_000) {
+                            output.appendLine(line)
+                        }
+                    }
+                }
+            }
+        }.also {
+            it.isDaemon = true
+            it.name = "silofs-process-crash-output-drain"
+            it.start()
+        }
+
+    private fun outputSnapshot(output: StringBuilder): String =
+        synchronized(output) {
+            output.toString()
+        }
 
     private fun newS3Client(endpoint: String): S3Client =
         S3Client

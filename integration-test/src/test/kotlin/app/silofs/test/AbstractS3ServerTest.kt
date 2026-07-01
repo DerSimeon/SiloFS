@@ -8,6 +8,7 @@ import app.silofs.server.DatabaseCredentialProvider
 import app.silofs.server.ObjectEncryptionConfig
 import app.silofs.server.SecurityConfig
 import app.silofs.server.ServerConfig
+import app.silofs.server.accessKeyRecordForSecret
 import app.silofs.server.s3Module
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.netty.Netty
@@ -55,6 +56,7 @@ abstract class AbstractS3ServerTest {
     protected lateinit var server: io.ktor.server.engine.EmbeddedServer<*, *>
     protected lateinit var endpoint: String
     protected var recoveryJob: RecoveryJob? = null
+    protected lateinit var securityConfig: SecurityConfig
 
     @BeforeAll
     fun startServer() {
@@ -63,20 +65,20 @@ abstract class AbstractS3ServerTest {
         val db = Database.fromUrl(pg.jdbcUrl, pg.username, pg.password)
         database = db
         val repo = JdbcMetadataRepository()
-        db.withConnection { c ->
-            repo.upsertAccessKey(c, ACCESS_KEY, SECRET_KEY, "test key")
-            repo.grantBucketPermission(c, ACCESS_KEY, "*", "ADMIN")
-        }
-        val objectEncryptionConfig = objectEncryptionConfig()
-        val blobStore = FsBlobStore(dataDir, objectEncryptionConfig.encryption)
-        val securityConfig =
+        securityConfig =
             SecurityConfig(
-                secretEncryptionKey = null,
-                requireEncryptedSecrets = false,
+                secretEncryptionKey = testAccessKeySecretEncryptionKey(),
+                requireEncryptedSecrets = true,
                 corsAllowedOrigins = emptyList(),
                 rateLimitPerAccessKeyRps = 0,
                 rateLimitPerAccessKeyBurst = 64,
             )
+        db.withConnection { c ->
+            repo.upsertAccessKeyRecord(c, accessKeyRecordForSecret(ACCESS_KEY, SECRET_KEY, "test key", securityConfig))
+            repo.grantBucketPermission(c, ACCESS_KEY, "*", "ADMIN")
+        }
+        val objectEncryptionConfig = objectEncryptionConfig()
+        val blobStore = FsBlobStore(dataDir, objectEncryptionConfig.encryption)
         val credentialProvider = DatabaseCredentialProvider(db, repo, securityConfig)
         val config =
             ServerConfig(
@@ -155,4 +157,6 @@ abstract class AbstractS3ServerTest {
 
     protected open fun objectEncryptionConfig(): ObjectEncryptionConfig =
         ObjectEncryptionConfig(ObjectEncryptionConfig.MODE_DISABLED, null, false)
+
+    protected fun testAccessKeySecretEncryptionKey(): ByteArray = ByteArray(32) { 7 }
 }
