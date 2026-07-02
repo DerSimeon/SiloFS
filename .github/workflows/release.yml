@@ -27,7 +27,6 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/silofs
   CLOUDSMITH_ENABLED: ${{ secrets.CLOUDSMITH_API_KEY != '' && secrets.CLOUDSMITH_OWNER != '' && secrets.CLOUDSMITH_REPO != '' }}
 
 jobs:
@@ -44,6 +43,12 @@ jobs:
           ref: ${{ github.event.workflow_run.head_sha || github.ref }}
 
       - uses: docker/setup-buildx-action@v3
+
+      - name: Normalize image name
+        id: image
+        run: |
+          owner="$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')"
+          echo "name=ghcr.io/${owner}/silofs" >> "$GITHUB_OUTPUT"
 
       - name: Derive version
         id: version
@@ -137,8 +142,8 @@ jobs:
           context: .
           push: true
           tags: |
-            ${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}
-            ${{ env.IMAGE_NAME }}:latest
+            ${{ steps.image.outputs.name }}:${{ steps.version.outputs.version }}
+            ${{ steps.image.outputs.name }}:latest
 
       - name: Publish GitHub release
         if: steps.publish.outputs.enabled == 'true'
