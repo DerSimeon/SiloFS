@@ -121,7 +121,7 @@ jobs:
               -v "$PWD/cli:/src" \
               -v "$PWD/dist/bin:/out" \
               -w /src \
-              golang:1.23.5-bookworm \
+              golang:1.25.0-bookworm \
               sh -c "gofmt -w main.go main_test.go && go test ./... && CGO_ENABLED=0 GOOS=linux GOARCH=$arch go build -trimpath -ldflags '-s -w -X main.version=${{ steps.version.outputs.version }}' -o /out/silofs-linux-$arch ."
           done
 
