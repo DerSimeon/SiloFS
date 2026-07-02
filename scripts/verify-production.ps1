@@ -52,8 +52,8 @@ try {
         docker run --rm `
             -v "${cliDir}:/src" `
             -w /src `
-            golang:1.23.5-bookworm `
-            sh -c "go test ./... && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags '-s -w' -o /tmp/silofs . && /tmp/silofs version"
+            golang:1.25-bookworm `
+            sh -c "/usr/local/go/bin/go test ./... && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 /usr/local/go/bin/go build -trimpath -ldflags '-s -w' -o /tmp/silofs . && /tmp/silofs version"
         if ($LASTEXITCODE -ne 0) {
             exit $LASTEXITCODE
         }

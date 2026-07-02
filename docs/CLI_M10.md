@@ -14,8 +14,8 @@ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w -X main
 Docker build smoke:
 
 ```bash
-docker run --rm -v "$PWD/cli:/src" -w /src golang:1.23.5-bookworm \
-  sh -c 'CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w -X main.version=0.15.0" -o /tmp/silofs . && /tmp/silofs version'
+docker run --rm -v "$PWD/cli:/src" -w /src golang:1.25-bookworm \
+  sh -c 'CGO_ENABLED=0 GOOS=linux GOARCH=amd64 /usr/local/go/bin/go build -trimpath -ldflags "-s -w -X main.version=0.15.0" -o /tmp/silofs . && /tmp/silofs version'
 ```
 
 Release packages publish the CLI as a Debian package named `silofs`:

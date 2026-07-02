@@ -25,8 +25,8 @@ outputs. Use one Gradle invocation when forcing recompilation with
 | AWS SDK Java v2 | `software.amazon.awssdk:s3:2.46.17` | `endpointOverride`, `pathStyleAccessEnabled(true)`, `chunkedEncodingEnabled(false)` | Pass |
 | AWS CLI | `amazon/aws-cli:2.15.57` | `--endpoint-url`, `s3.addressing_style = path` | Pass |
 | boto3 | `python:3.12.8-slim-bookworm`, `boto3==1.35.99` | `endpoint_url`, `Config(s3={"addressing_style": "path"}, signature_version="s3v4")` | Pass |
-| AWS SDK JavaScript v3 | `node:22.13.1-bookworm-slim`, `@aws-sdk/client-s3==3.731.1` | `endpoint`, `forcePathStyle: true` | Pass |
-| AWS SDK Go v2 | `golang:1.23.5-bookworm`, `service/s3 v1.71.1` | `BaseEndpoint`, `UsePathStyle = true` | Pass |
+| AWS SDK JavaScript v3 | `node:22.13.1-bookworm-slim`, `@aws-sdk/client-s3==3.1078.0` | `endpoint`, `forcePathStyle: true` | Pass |
+| AWS SDK Go v2 | `golang:1.25-bookworm`, `service/s3 v1.97.3` | `BaseEndpoint`, `UsePathStyle = true` | Pass |
 
 ## Shared scenario contract
 

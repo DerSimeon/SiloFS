@@ -1,6 +1,6 @@
-FROM golang:1.23.5-bookworm
+FROM golang:1.25-bookworm
 
 WORKDIR /compat
 COPY go.mod go.sum compat.go /compat/
-RUN go mod download
-ENTRYPOINT ["go", "run", "-mod=readonly", "/compat/compat.go"]
+RUN /usr/local/go/bin/go mod download
+ENTRYPOINT ["/usr/local/go/bin/go", "run", "-mod=readonly", "/compat/compat.go"]
