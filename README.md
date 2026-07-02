@@ -92,3 +92,11 @@ More details:
 ## License
 
 SiloFS is licensed under the [Apache License 2.0](LICENSE).
+
+## AI Assistance Notice
+
+This project was made with the help of Codex. The idea, feature set, and most
+of the implementation were made by an actual human. I do not want to hide the
+fact that AI was used.
+
+Use AI as a tool, not a replacement.
