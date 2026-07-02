@@ -9,6 +9,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.97.3
 	github.com/jackc/pgx/v5 v5.9.2
 	github.com/spf13/cobra v1.9.1
+	golang.org/x/term v0.44.0
 )
 
 require (
@@ -30,5 +31,6 @@ require (
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
 	github.com/spf13/pflag v1.0.6 // indirect
+	golang.org/x/sys v0.46.0 // indirect
 	golang.org/x/text v0.31.0 // indirect
 )

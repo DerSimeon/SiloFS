@@ -30,23 +30,36 @@ silofs version
 ## Configuration precedence
 
 1. Command flags.
-2. `SILOS_*` environment variables.
+2. `SILOS_*` or `SILOFS_*` environment variables.
 3. Existing server-compatible `S3_*` environment variables.
-4. Local development defaults.
+4. Values loaded from `--from-env PATH`.
+5. Stored CLI config.
+6. Local development defaults.
+
+`silofs configure` and `silofs login` prompt for endpoint, region, access key
+ID, and secret access key, then write an env-style config file under the OS user
+config directory. Use `--config PATH` to choose a different file. The same
+commands are also available under `silofs admin`. The config file may contain
+plaintext secrets and is written with restrictive file permissions where the OS
+supports them.
+
+`--from-env PATH` reads server-style env files such as `/opt/silofs/.env` for a
+single command. It is useful for local admin commands on a deployed host without
+copying database credentials into the user config file.
 
 Common variables:
 
-| CLI flag | `SILOS_*` | `S3_*` |
-|----------|-----------|--------|
-| `--endpoint` | `SILOS_ENDPOINT` | `S3_ENDPOINT` |
-| `--region` | `SILOS_REGION` | `S3_REGION` |
-| `--access-key-id` | `SILOS_ACCESS_KEY_ID` | `S3_ACCESS_KEY_ID` |
-| `--secret-access-key` | `SILOS_SECRET_ACCESS_KEY` | `S3_SECRET_ACCESS_KEY` |
-| `--db-url` | `SILOS_DB_URL` | `S3_DB_URL` |
-| `--db-user` | `SILOS_DB_USER` | `S3_DB_USER` |
-| `--db-password` | `SILOS_DB_PASSWORD` | `S3_DB_PASSWORD` |
-| `--data-dir` | `SILOS_DATA_DIR` | `S3_DATA_DIR` |
-| `--object-encryption-master-key` | `SILOS_OBJECT_ENCRYPTION_MASTER_KEY` | `S3_OBJECT_ENCRYPTION_MASTER_KEY` |
+| CLI flag | Canonical env | Compatible env |
+|----------|---------------|----------------|
+| `--endpoint` | `SILOS_ENDPOINT` | `SILOFS_ENDPOINT`, `S3_ENDPOINT` |
+| `--region` | `SILOS_REGION` | `SILOFS_REGION`, `S3_REGION` |
+| `--access-key-id` | `SILOS_ACCESS_KEY_ID` | `SILOFS_ACCESS_KEY_ID`, `S3_ACCESS_KEY_ID` |
+| `--secret-access-key` | `SILOS_SECRET_ACCESS_KEY` | `SILOFS_SECRET_ACCESS_KEY`, `S3_SECRET_ACCESS_KEY` |
+| `--db-url` | `SILOS_DB_URL` | `SILOFS_DB_URL`, `S3_DB_URL` |
+| `--db-user` | `SILOS_DB_USER` | `SILOFS_DB_USER`, `S3_DB_USER` |
+| `--db-password` | `SILOS_DB_PASSWORD` | `SILOFS_DB_PASSWORD`, `S3_DB_PASSWORD` |
+| `--data-dir` | `SILOS_DATA_DIR` | `SILOFS_DATA_DIR`, `S3_DATA_DIR` |
+| `--object-encryption-master-key` | `SILOS_OBJECT_ENCRYPTION_MASTER_KEY` | `SILOFS_OBJECT_ENCRYPTION_MASTER_KEY`, `S3_OBJECT_ENCRYPTION_MASTER_KEY` |
 
 ## S3 commands
 
@@ -59,6 +72,7 @@ Common variables:
 - `silofs rm s3://bucket/key`
 - `silofs presign get s3://bucket/key [--expires 15m]`
 - `silofs presign put s3://bucket/key [--expires 15m]`
+- `silofs configure` / `silofs login`
 
 The CLI uses path-style addressing with an explicit endpoint, matching the
 declared compatibility envelope.
@@ -66,6 +80,7 @@ declared compatibility envelope.
 ## Admin commands
 
 - `silofs admin inspect buckets`
+- `silofs admin configure` / `silofs admin login`
 - `silofs admin inspect objects --bucket BUCKET`
 - `silofs admin inspect multipart [--bucket BUCKET]`
 - `silofs admin inspect blob-refs --sha256 SHA256`
@@ -98,6 +113,9 @@ unsupported.
 
 Secrets and presigned signatures are redacted from returned errors. Mutating
 repair and GC are intentionally not exposed; only dry-run reports are supported.
+Human-readable success/error status is printed to stderr with color when the
+terminal supports it. Use `--quiet` to suppress status lines and `--no-color` to
+disable color.
 
 Access-key creation, rotation, and reencrypt require
 `SILOS_ACCESS_KEY_SECRET_ENCRYPTION_KEY` or

@@ -50,6 +50,7 @@ Or build and use the standalone CLI:
 ```bash
 cd cli
 go build -o silofs .
+./silofs configure
 ./silofs --endpoint http://localhost:8080 mb s3://photos
 ./silofs cp ./image.jpg s3://photos/image.jpg
 ./silofs ls s3://photos/

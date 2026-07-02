@@ -16,13 +16,110 @@ import (
 func TestConfigPrecedence(t *testing.T) {
 	t.Setenv("SILOS_ENDPOINT", "http://silos")
 	t.Setenv("S3_ENDPOINT", "http://s3")
-	cfg := resolveConfig(&flagConfig{})
+	cfg, err := resolveConfig(&flagConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if cfg.Endpoint != "http://silos" {
 		t.Fatalf("expected SILOS endpoint, got %q", cfg.Endpoint)
 	}
-	cfg = resolveConfig(&flagConfig{Endpoint: "http://flag"})
+	cfg, err = resolveConfig(&flagConfig{Endpoint: "http://flag"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if cfg.Endpoint != "http://flag" {
 		t.Fatalf("expected flag endpoint, got %q", cfg.Endpoint)
+	}
+}
+
+func TestConfigLoadsFromEnvFileAndStoredConfig(t *testing.T) {
+	for _, key := range []string{
+		"SILOS_ENDPOINT",
+		"SILOFS_ENDPOINT",
+		"S3_ENDPOINT",
+		"SILOS_ACCESS_KEY_ID",
+		"S3_ACCESS_KEY_ID",
+		"SILOS_SECRET_ACCESS_KEY",
+		"S3_SECRET_ACCESS_KEY",
+	} {
+		t.Setenv(key, "")
+	}
+	dir := t.TempDir()
+	stored := filepath.Join(dir, "config.env")
+	envFile := filepath.Join(dir, "server.env")
+	if err := os.WriteFile(stored, []byte("SILOS_ENDPOINT=http://stored\nSILOS_ACCESS_KEY_ID=stored-key\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(envFile, []byte("S3_ENDPOINT=http://env-file\nS3_SECRET_ACCESS_KEY='env secret'\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := resolveConfig(&flagConfig{ConfigPath: stored, FromEnv: envFile})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Endpoint != "http://env-file" {
+		t.Fatalf("expected env-file endpoint, got %q", cfg.Endpoint)
+	}
+	if cfg.AccessKeyID != "stored-key" {
+		t.Fatalf("expected stored access key, got %q", cfg.AccessKeyID)
+	}
+	if cfg.SecretAccessKey != "env secret" {
+		t.Fatalf("expected env-file secret, got %q", cfg.SecretAccessKey)
+	}
+}
+
+func TestParseEnv(t *testing.T) {
+	got, err := parseEnv(strings.NewReader(`
+# comment
+export SILOS_ENDPOINT="http://localhost:8080"
+SILOS_ACCESS_KEY_ID=AKIA123 # inline comment
+SILOS_SECRET_ACCESS_KEY='secret value'
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got["SILOS_ENDPOINT"] != "http://localhost:8080" ||
+		got["SILOS_ACCESS_KEY_ID"] != "AKIA123" ||
+		got["SILOS_SECRET_ACCESS_KEY"] != "secret value" {
+		t.Fatalf("unexpected env parse: %#v", got)
+	}
+}
+
+func TestConfigureWritesStoredConfig(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.env")
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	cmd := newRootCommand([]string{
+		"--config", path,
+		"--endpoint", "http://silos",
+		"--region", "eu-test-1",
+		"--access-key-id", "AKIATEST",
+		"--secret-access-key", "secret",
+		"--quiet",
+		"configure",
+	}, &out, &errOut)
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(raw)
+	for _, want := range []string{
+		"SILOS_ENDPOINT=http://silos",
+		"SILOS_REGION=eu-test-1",
+		"SILOS_ACCESS_KEY_ID=AKIATEST",
+		"SILOS_SECRET_ACCESS_KEY=secret",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("missing %q in config:\n%s", want, text)
+		}
+	}
+	if !strings.Contains(out.String(), "config="+path) {
+		t.Fatalf("missing config output: %q", out.String())
 	}
 }
 

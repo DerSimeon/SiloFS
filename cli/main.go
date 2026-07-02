@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
@@ -17,6 +18,8 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -26,6 +29,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/jackc/pgx/v5"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
 
 var version = "0.10.0-dev"
@@ -54,11 +58,16 @@ type flagConfig struct {
 	DataDir         string
 	SecretKeyB64    string
 	ObjectKeyB64    string
+	ConfigPath      string
+	FromEnv         string
+	NoColor         bool
+	Quiet           bool
 }
 
 func main() {
-	if err := newRootCommand(os.Args[1:], os.Stdout, os.Stderr).Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, redact(err.Error()))
+	root := newRootCommand(os.Args[1:], os.Stdout, os.Stderr)
+	if err := root.Execute(); err != nil {
+		fmt.Fprintln(os.Stderr, errorText(redact(err.Error()), shouldColor(os.Stderr, hasNoColorArg(os.Args[1:]))))
 		os.Exit(1)
 	}
 }
@@ -70,6 +79,9 @@ func newRootCommand(args []string, stdout, stderr io.Writer) *cobra.Command {
 		Short:         "Silofs object storage CLI",
 		SilenceUsage:  true,
 		SilenceErrors: true,
+	}
+	root.PersistentPostRun = func(cmd *cobra.Command, args []string) {
+		reportCommandSuccess(cmd, flags, stderr)
 	}
 	root.SetOut(stdout)
 	root.SetErr(stderr)
@@ -84,6 +96,10 @@ func newRootCommand(args []string, stdout, stderr io.Writer) *cobra.Command {
 	root.PersistentFlags().StringVar(&flags.DataDir, "data-dir", "", "Silofs data directory")
 	root.PersistentFlags().StringVar(&flags.SecretKeyB64, "access-key-secret-encryption-key", "", "base64 AES-GCM key for access-key secrets")
 	root.PersistentFlags().StringVar(&flags.ObjectKeyB64, "object-encryption-master-key", "", "base64 AES-GCM key for encrypted object verification")
+	root.PersistentFlags().StringVar(&flags.ConfigPath, "config", "", "Stored CLI config path")
+	root.PersistentFlags().StringVar(&flags.FromEnv, "from-env", "", "Load configuration from an env file")
+	root.PersistentFlags().BoolVar(&flags.NoColor, "no-color", false, "Disable colored status output")
+	root.PersistentFlags().BoolVar(&flags.Quiet, "quiet", false, "Suppress human-readable status output")
 
 	root.AddCommand(&cobra.Command{
 		Use:   "version",
@@ -93,38 +109,443 @@ func newRootCommand(args []string, stdout, stderr io.Writer) *cobra.Command {
 			return err
 		},
 	})
+	root.AddCommand(configureCommand(flags, stdout, stderr))
 	root.AddCommand(mbCommand(flags, stdout), rbCommand(flags, stdout), lsCommand(flags, stdout), statCommand(flags, stdout))
 	root.AddCommand(cpCommand(flags, stdout), catCommand(flags, stdout), rmCommand(flags, stdout), presignCommand(flags, stdout))
-	root.AddCommand(adminCommand(flags, stdout))
+	root.AddCommand(adminCommand(flags, stdout, stderr))
 	return root
 }
 
-func resolveConfig(f *flagConfig) appConfig {
-	return appConfig{
-		Endpoint:        choose(f.Endpoint, "SILOS_ENDPOINT", "S3_ENDPOINT", "http://127.0.0.1:8080"),
-		Region:          choose(f.Region, "SILOS_REGION", "S3_REGION", "us-east-1"),
-		AccessKeyID:     choose(f.AccessKeyID, "SILOS_ACCESS_KEY_ID", "S3_ACCESS_KEY_ID", "AKIAIOSFODNN7EXAMPLE"),
-		SecretAccessKey: choose(f.SecretAccessKey, "SILOS_SECRET_ACCESS_KEY", "S3_SECRET_ACCESS_KEY", "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"),
-		DBURL:           choose(f.DBURL, "SILOS_DB_URL", "S3_DB_URL", "postgres://silofs:silofs@localhost:5432/silofs"),
-		DBUser:          choose(f.DBUser, "SILOS_DB_USER", "S3_DB_USER", "silofs"),
-		DBPassword:      choose(f.DBPassword, "SILOS_DB_PASSWORD", "S3_DB_PASSWORD", "silofs"),
-		DataDir:         choose(f.DataDir, "SILOS_DATA_DIR", "S3_DATA_DIR", "/var/lib/silofs/data"),
-		SecretKeyB64:    choose(f.SecretKeyB64, "SILOS_ACCESS_KEY_SECRET_ENCRYPTION_KEY", "S3_ACCESS_KEY_SECRET_ENCRYPTION_KEY", ""),
-		ObjectKeyB64:    choose(f.ObjectKeyB64, "SILOS_OBJECT_ENCRYPTION_MASTER_KEY", "S3_OBJECT_ENCRYPTION_MASTER_KEY", ""),
-	}
+type configSources struct {
+	EnvFile    map[string]string
+	Stored     map[string]string
+	ConfigPath string
 }
 
-func choose(flagValue, silosEnv, s3Env, fallback string) string {
+func resolveConfig(f *flagConfig) (appConfig, error) {
+	sources, err := loadConfigSources(f)
+	if err != nil {
+		return appConfig{}, err
+	}
+	return appConfig{
+		Endpoint:        chooseConfig(f.Endpoint, sources, "http://127.0.0.1:8080", "SILOS_ENDPOINT", "SILOFS_ENDPOINT", "S3_ENDPOINT"),
+		Region:          chooseConfig(f.Region, sources, "us-east-1", "SILOS_REGION", "SILOFS_REGION", "S3_REGION"),
+		AccessKeyID:     chooseConfig(f.AccessKeyID, sources, "AKIAIOSFODNN7EXAMPLE", "SILOS_ACCESS_KEY_ID", "SILOFS_ACCESS_KEY_ID", "S3_ACCESS_KEY_ID"),
+		SecretAccessKey: chooseConfig(f.SecretAccessKey, sources, "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY", "SILOS_SECRET_ACCESS_KEY", "SILOFS_SECRET_ACCESS_KEY", "S3_SECRET_ACCESS_KEY"),
+		DBURL:           chooseConfig(f.DBURL, sources, "postgres://silofs:silofs@localhost:5432/silofs", "SILOS_DB_URL", "SILOFS_DB_URL", "S3_DB_URL"),
+		DBUser:          chooseConfig(f.DBUser, sources, "silofs", "SILOS_DB_USER", "SILOFS_DB_USER", "S3_DB_USER"),
+		DBPassword:      chooseConfig(f.DBPassword, sources, "silofs", "SILOS_DB_PASSWORD", "SILOFS_DB_PASSWORD", "S3_DB_PASSWORD"),
+		DataDir:         chooseConfig(f.DataDir, sources, "/var/lib/silofs/data", "SILOS_DATA_DIR", "SILOFS_DATA_DIR", "S3_DATA_DIR"),
+		SecretKeyB64: chooseConfig(
+			f.SecretKeyB64,
+			sources,
+			"",
+			"SILOS_ACCESS_KEY_SECRET_ENCRYPTION_KEY",
+			"SILOFS_ACCESS_KEY_SECRET_ENCRYPTION_KEY",
+			"S3_ACCESS_KEY_SECRET_ENCRYPTION_KEY",
+		),
+		ObjectKeyB64: chooseConfig(
+			f.ObjectKeyB64,
+			sources,
+			"",
+			"SILOS_OBJECT_ENCRYPTION_MASTER_KEY",
+			"SILOFS_OBJECT_ENCRYPTION_MASTER_KEY",
+			"S3_OBJECT_ENCRYPTION_MASTER_KEY",
+		),
+	}, nil
+}
+
+func resolveConfigForSave(f *flagConfig) (appConfig, string, error) {
+	sources, err := loadConfigSources(f)
+	if err != nil {
+		return appConfig{}, "", err
+	}
+	return appConfig{
+		Endpoint:        chooseConfig(f.Endpoint, sources, "http://127.0.0.1:8080", "SILOS_ENDPOINT", "SILOFS_ENDPOINT", "S3_ENDPOINT"),
+		Region:          chooseConfig(f.Region, sources, "us-east-1", "SILOS_REGION", "SILOFS_REGION", "S3_REGION"),
+		AccessKeyID:     chooseConfig(f.AccessKeyID, sources, "", "SILOS_ACCESS_KEY_ID", "SILOFS_ACCESS_KEY_ID", "S3_ACCESS_KEY_ID"),
+		SecretAccessKey: chooseConfig(f.SecretAccessKey, sources, "", "SILOS_SECRET_ACCESS_KEY", "SILOFS_SECRET_ACCESS_KEY", "S3_SECRET_ACCESS_KEY"),
+		DBURL:           chooseConfig(f.DBURL, sources, "", "SILOS_DB_URL", "SILOFS_DB_URL", "S3_DB_URL"),
+		DBUser:          chooseConfig(f.DBUser, sources, "", "SILOS_DB_USER", "SILOFS_DB_USER", "S3_DB_USER"),
+		DBPassword:      chooseConfig(f.DBPassword, sources, "", "SILOS_DB_PASSWORD", "SILOFS_DB_PASSWORD", "S3_DB_PASSWORD"),
+		DataDir:         chooseConfig(f.DataDir, sources, "", "SILOS_DATA_DIR", "SILOFS_DATA_DIR", "S3_DATA_DIR"),
+		SecretKeyB64: chooseConfig(
+			f.SecretKeyB64,
+			sources,
+			"",
+			"SILOS_ACCESS_KEY_SECRET_ENCRYPTION_KEY",
+			"SILOFS_ACCESS_KEY_SECRET_ENCRYPTION_KEY",
+			"S3_ACCESS_KEY_SECRET_ENCRYPTION_KEY",
+		),
+		ObjectKeyB64: chooseConfig(
+			f.ObjectKeyB64,
+			sources,
+			"",
+			"SILOS_OBJECT_ENCRYPTION_MASTER_KEY",
+			"SILOFS_OBJECT_ENCRYPTION_MASTER_KEY",
+			"S3_OBJECT_ENCRYPTION_MASTER_KEY",
+		),
+	}, sources.ConfigPath, nil
+}
+
+func chooseConfig(flagValue string, sources configSources, fallback string, keys ...string) string {
 	if flagValue != "" {
 		return flagValue
 	}
-	if v := os.Getenv(silosEnv); v != "" {
-		return v
+	for _, key := range keys {
+		if v := os.Getenv(key); v != "" {
+			return v
+		}
 	}
-	if v := os.Getenv(s3Env); v != "" {
-		return v
+	for _, key := range keys {
+		if v := sources.EnvFile[key]; v != "" {
+			return v
+		}
+	}
+	for _, key := range keys {
+		if v := sources.Stored[key]; v != "" {
+			return v
+		}
 	}
 	return fallback
+}
+
+func loadConfigSources(f *flagConfig) (configSources, error) {
+	configPath, err := cliConfigPath(f.ConfigPath)
+	if err != nil {
+		return configSources{}, err
+	}
+	stored, err := readEnvFile(configPath, false)
+	if err != nil {
+		return configSources{}, err
+	}
+	envFile := map[string]string{}
+	if f.FromEnv != "" {
+		envFile, err = readEnvFile(f.FromEnv, true)
+		if err != nil {
+			return configSources{}, err
+		}
+	}
+	return configSources{EnvFile: envFile, Stored: stored, ConfigPath: configPath}, nil
+}
+
+func cliConfigPath(flagPath string) (string, error) {
+	if flagPath != "" {
+		return flagPath, nil
+	}
+	if envPath := os.Getenv("SILOS_CONFIG"); envPath != "" {
+		return envPath, nil
+	}
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		home, homeErr := os.UserHomeDir()
+		if homeErr != nil {
+			return "", err
+		}
+		return filepath.Join(home, ".silofs", "config.env"), nil
+	}
+	return filepath.Join(dir, "silofs", "config.env"), nil
+}
+
+func readEnvFile(path string, required bool) (map[string]string, error) {
+	values := map[string]string{}
+	file, err := os.Open(path)
+	if err != nil {
+		if !required && errors.Is(err, os.ErrNotExist) {
+			return values, nil
+		}
+		return nil, err
+	}
+	defer file.Close()
+	return parseEnv(file)
+}
+
+func parseEnv(r io.Reader) (map[string]string, error) {
+	values := map[string]string{}
+	scanner := bufio.NewScanner(r)
+	lineNo := 0
+	for scanner.Scan() {
+		lineNo++
+		line := strings.TrimSpace(strings.TrimPrefix(scanner.Text(), "\ufeff"))
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		line = strings.TrimSpace(strings.TrimPrefix(line, "export "))
+		idx := strings.IndexByte(line, '=')
+		if idx <= 0 {
+			return nil, fmt.Errorf("invalid env file line %d: expected KEY=VALUE", lineNo)
+		}
+		key := strings.TrimSpace(line[:idx])
+		if !validEnvKey(key) {
+			return nil, fmt.Errorf("invalid env file line %d: invalid key %q", lineNo, key)
+		}
+		value, err := parseEnvValue(strings.TrimSpace(line[idx+1:]))
+		if err != nil {
+			return nil, fmt.Errorf("invalid env file line %d: %w", lineNo, err)
+		}
+		values[key] = value
+	}
+	return values, scanner.Err()
+}
+
+func validEnvKey(key string) bool {
+	for i, r := range key {
+		if r == '_' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' && i > 0 {
+			continue
+		}
+		return false
+	}
+	return key != ""
+}
+
+func parseEnvValue(value string) (string, error) {
+	if value == "" {
+		return "", nil
+	}
+	if strings.HasPrefix(value, `"`) {
+		return strconv.Unquote(value)
+	}
+	if strings.HasPrefix(value, "'") {
+		if !strings.HasSuffix(value, "'") || len(value) == 1 {
+			return "", errors.New("unterminated single-quoted value")
+		}
+		return value[1 : len(value)-1], nil
+	}
+	return stripInlineComment(value), nil
+}
+
+func stripInlineComment(value string) string {
+	for i, r := range value {
+		if r == '#' && i > 0 {
+			prev := value[i-1]
+			if prev == ' ' || prev == '\t' {
+				return strings.TrimSpace(value[:i])
+			}
+		}
+	}
+	return value
+}
+
+func configureCommand(flags *flagConfig, stdout, stderr io.Writer) *cobra.Command {
+	return &cobra.Command{
+		Use:     "configure",
+		Aliases: []string{"login"},
+		Short:   "Store SiloFS CLI credentials",
+		Args:    cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, path, err := resolveConfigForSave(flags)
+			if err != nil {
+				return err
+			}
+			if err := promptConfig(cmd, &cfg); err != nil {
+				return err
+			}
+			if cfg.AccessKeyID == "" {
+				return errors.New("access key id is required")
+			}
+			if cfg.SecretAccessKey == "" {
+				return errors.New("secret access key is required")
+			}
+			if err := writeStoredConfig(path, cfg); err != nil {
+				return err
+			}
+			writeStatus(stderr, flags, true, "saved credentials to %s", path)
+			fmt.Fprintf(stdout, "config=%s\nendpoint=%s\nregion=%s\naccess_key_id=%s\n", path, cfg.Endpoint, cfg.Region, cfg.AccessKeyID)
+			return nil
+		},
+	}
+}
+
+func promptConfig(cmd *cobra.Command, cfg *appConfig) error {
+	in := cmd.InOrStdin()
+	errOut := cmd.ErrOrStderr()
+	if !isTerminal(in) {
+		return nil
+	}
+	reader := bufio.NewReader(in)
+	var err error
+	if cfg.Endpoint, err = promptLine(reader, errOut, "Endpoint", cfg.Endpoint, false); err != nil {
+		return err
+	}
+	if cfg.Region, err = promptLine(reader, errOut, "Region", cfg.Region, false); err != nil {
+		return err
+	}
+	if cfg.AccessKeyID, err = promptLine(reader, errOut, "Access key ID", cfg.AccessKeyID, true); err != nil {
+		return err
+	}
+	if cfg.SecretAccessKey, err = promptSecret(in, reader, errOut, cfg.SecretAccessKey); err != nil {
+		return err
+	}
+	return nil
+}
+
+func promptLine(reader *bufio.Reader, out io.Writer, label, current string, required bool) (string, error) {
+	for {
+		if current != "" {
+			fmt.Fprintf(out, "%s [%s]: ", label, current)
+		} else {
+			fmt.Fprintf(out, "%s: ", label)
+		}
+		line, err := reader.ReadString('\n')
+		if err != nil && !errors.Is(err, io.EOF) {
+			return "", err
+		}
+		value := strings.TrimSpace(line)
+		if value == "" {
+			value = current
+		}
+		if value != "" || !required {
+			return value, nil
+		}
+		fmt.Fprintln(out, "Value is required.")
+	}
+}
+
+func promptSecret(in io.Reader, reader *bufio.Reader, out io.Writer, current string) (string, error) {
+	label := "Secret access key"
+	for {
+		if current != "" {
+			fmt.Fprintf(out, "%s [stored, press Enter to keep]: ", label)
+		} else {
+			fmt.Fprintf(out, "%s: ", label)
+		}
+		var value string
+		if file, ok := in.(*os.File); ok && term.IsTerminal(int(file.Fd())) {
+			raw, err := term.ReadPassword(int(file.Fd()))
+			fmt.Fprintln(out)
+			if err != nil {
+				return "", err
+			}
+			value = strings.TrimSpace(string(raw))
+		} else {
+			line, err := reader.ReadString('\n')
+			if err != nil && !errors.Is(err, io.EOF) {
+				return "", err
+			}
+			value = strings.TrimSpace(line)
+		}
+		if value == "" {
+			value = current
+		}
+		if value != "" {
+			return value, nil
+		}
+		fmt.Fprintln(out, "Value is required.")
+	}
+}
+
+func writeStoredConfig(path string, cfg appConfig) error {
+	values := configValues(cfg)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	var b strings.Builder
+	b.WriteString("# SiloFS CLI config. Keep this file private; it may contain secrets.\n")
+	for _, key := range keys {
+		value := values[key]
+		if value == "" {
+			continue
+		}
+		b.WriteString(key)
+		b.WriteByte('=')
+		b.WriteString(formatEnvValue(value))
+		b.WriteByte('\n')
+	}
+	if err := os.WriteFile(path, []byte(b.String()), 0o600); err != nil {
+		return err
+	}
+	return os.Chmod(path, 0o600)
+}
+
+func configValues(cfg appConfig) map[string]string {
+	return map[string]string{
+		"SILOS_ACCESS_KEY_ID":                    cfg.AccessKeyID,
+		"SILOS_ACCESS_KEY_SECRET_ENCRYPTION_KEY": cfg.SecretKeyB64,
+		"SILOS_DATA_DIR":                         cfg.DataDir,
+		"SILOS_DB_PASSWORD":                      cfg.DBPassword,
+		"SILOS_DB_URL":                           cfg.DBURL,
+		"SILOS_DB_USER":                          cfg.DBUser,
+		"SILOS_ENDPOINT":                         cfg.Endpoint,
+		"SILOS_OBJECT_ENCRYPTION_MASTER_KEY":     cfg.ObjectKeyB64,
+		"SILOS_REGION":                           cfg.Region,
+		"SILOS_SECRET_ACCESS_KEY":                cfg.SecretAccessKey,
+	}
+}
+
+func formatEnvValue(value string) string {
+	if value == "" {
+		return `""`
+	}
+	for _, r := range value {
+		if r <= ' ' || r == '#' || r == '"' || r == '\'' || r == '\\' {
+			return strconv.Quote(value)
+		}
+	}
+	return value
+}
+
+func isTerminal(r io.Reader) bool {
+	file, ok := r.(*os.File)
+	return ok && term.IsTerminal(int(file.Fd()))
+}
+
+func writeStatus(w io.Writer, flags *flagConfig, ok bool, format string, args ...any) {
+	if w == nil || flags.Quiet {
+		return
+	}
+	msg := fmt.Sprintf(format, args...)
+	fmt.Fprintln(w, statusText(ok, msg, shouldColor(w, flags.NoColor)))
+}
+
+func reportCommandSuccess(cmd *cobra.Command, flags *flagConfig, stderr io.Writer) {
+	switch cmd.CommandPath() {
+	case "silofs cat", "silofs configure", "silofs login", "silofs admin configure", "silofs admin login", "silofs version":
+		return
+	}
+	if cmd.Runnable() {
+		name := strings.TrimPrefix(cmd.CommandPath(), "silofs ")
+		writeStatus(stderr, flags, true, "completed %s", name)
+	}
+}
+
+func statusText(ok bool, msg string, color bool) string {
+	if ok {
+		return colorize("✓", "32", color) + " " + msg
+	}
+	return colorize("✗", "31", color) + " " + msg
+}
+
+func errorText(msg string, color bool) string {
+	return statusText(false, msg, color)
+}
+
+func colorize(s, code string, enabled bool) string {
+	if !enabled {
+		return s
+	}
+	return "\x1b[" + code + "m" + s + "\x1b[0m"
+}
+
+func shouldColor(w io.Writer, disabled bool) bool {
+	if disabled || os.Getenv("NO_COLOR") != "" {
+		return false
+	}
+	file, ok := w.(*os.File)
+	return ok && term.IsTerminal(int(file.Fd()))
+}
+
+func hasNoColorArg(args []string) bool {
+	for _, arg := range args {
+		if arg == "--no-color" || strings.HasPrefix(arg, "--no-color=") {
+			return true
+		}
+	}
+	return false
 }
 
 func s3Client(ctx context.Context, cfg appConfig) (*s3.Client, error) {
@@ -140,6 +561,14 @@ func s3Client(ctx context.Context, cfg appConfig) (*s3.Client, error) {
 		o.BaseEndpoint = aws.String(cfg.Endpoint)
 		o.UsePathStyle = true
 	}), nil
+}
+
+func resolvedS3Client(ctx context.Context, flags *flagConfig) (*s3.Client, error) {
+	cfg, err := resolveConfig(flags)
+	if err != nil {
+		return nil, err
+	}
+	return s3Client(ctx, cfg)
 }
 
 type s3URL struct {
@@ -169,7 +598,7 @@ func mbCommand(flags *flagConfig, stdout io.Writer) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			client, err := s3Client(cmd.Context(), resolveConfig(flags))
+			client, err := resolvedS3Client(cmd.Context(), flags)
 			if err != nil {
 				return redactError(err)
 			}
@@ -192,7 +621,7 @@ func rbCommand(flags *flagConfig, stdout io.Writer) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			client, err := s3Client(cmd.Context(), resolveConfig(flags))
+			client, err := resolvedS3Client(cmd.Context(), flags)
 			if err != nil {
 				return redactError(err)
 			}
@@ -211,7 +640,7 @@ func lsCommand(flags *flagConfig, stdout io.Writer) *cobra.Command {
 		Short: "List buckets or objects",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			client, err := s3Client(cmd.Context(), resolveConfig(flags))
+			client, err := resolvedS3Client(cmd.Context(), flags)
 			if err != nil {
 				return redactError(err)
 			}
@@ -251,7 +680,7 @@ func statCommand(flags *flagConfig, stdout io.Writer) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			client, err := s3Client(cmd.Context(), resolveConfig(flags))
+			client, err := resolvedS3Client(cmd.Context(), flags)
 			if err != nil {
 				return redactError(err)
 			}
@@ -281,7 +710,7 @@ func cpCommand(flags *flagConfig, stdout io.Writer) *cobra.Command {
 		Short: "Copy between local files and S3",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			client, err := s3Client(cmd.Context(), resolveConfig(flags))
+			client, err := resolvedS3Client(cmd.Context(), flags)
 			if err != nil {
 				return redactError(err)
 			}
@@ -354,7 +783,7 @@ func catCommand(flags *flagConfig, stdout io.Writer) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			client, err := s3Client(cmd.Context(), resolveConfig(flags))
+			client, err := resolvedS3Client(cmd.Context(), flags)
 			if err != nil {
 				return redactError(err)
 			}
@@ -385,7 +814,7 @@ func rmCommand(flags *flagConfig, stdout io.Writer) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			client, err := s3Client(cmd.Context(), resolveConfig(flags))
+			client, err := resolvedS3Client(cmd.Context(), flags)
 			if err != nil {
 				return redactError(err)
 			}
@@ -415,7 +844,7 @@ func presignObjectCommand(verb string, flags *flagConfig, stdout io.Writer) *cob
 			if err != nil {
 				return err
 			}
-			client, err := s3Client(cmd.Context(), resolveConfig(flags))
+			client, err := resolvedS3Client(cmd.Context(), flags)
 			if err != nil {
 				return redactError(err)
 			}
@@ -440,8 +869,9 @@ func presignObjectCommand(verb string, flags *flagConfig, stdout io.Writer) *cob
 	return cmd
 }
 
-func adminCommand(flags *flagConfig, stdout io.Writer) *cobra.Command {
+func adminCommand(flags *flagConfig, stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{Use: "admin", Short: "Local admin commands"}
+	cmd.AddCommand(configureCommand(flags, stdout, stderr))
 	cmd.AddCommand(adminInspectCommand(flags, stdout), adminStorageCommand(flags, stdout), adminCheckBlobsCommand(flags, stdout))
 	cmd.AddCommand(adminRepairCommand(flags, stdout), adminGCCommand(flags, stdout), adminBackupCommand(flags, stdout), adminMigrateCommand(flags, stdout), adminAccessKeyCommand(flags, stdout))
 	cmd.AddCommand(adminGrantCommand(flags, stdout))
@@ -804,7 +1234,10 @@ func accessKeyReencryptCommand(flags *flagConfig, stdout io.Writer) *cobra.Comma
 
 func withDB(flags *flagConfig, fn func(context.Context, *pgx.Conn, appConfig) error) func(*cobra.Command, []string) error {
 	return func(cmd *cobra.Command, args []string) error {
-		cfg := resolveConfig(flags)
+		cfg, err := resolveConfig(flags)
+		if err != nil {
+			return err
+		}
 		dsn, err := postgresDSN(cfg)
 		if err != nil {
 			return err
@@ -820,7 +1253,10 @@ func withDB(flags *flagConfig, fn func(context.Context, *pgx.Conn, appConfig) er
 
 func withDBArgs(flags *flagConfig, fn func(context.Context, *pgx.Conn, appConfig, []string) error) func(*cobra.Command, []string) error {
 	return func(cmd *cobra.Command, args []string) error {
-		cfg := resolveConfig(flags)
+		cfg, err := resolveConfig(flags)
+		if err != nil {
+			return err
+		}
 		dsn, err := postgresDSN(cfg)
 		if err != nil {
 			return err

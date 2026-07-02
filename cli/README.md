@@ -14,11 +14,15 @@ sudo apt update
 sudo apt install silofs
 ```
 
-The root command accepts flags first, then `SILOS_*` environment variables, then compatible `S3_*` environment variables.
+The root command accepts flags first, then `SILOS_*` or `SILOFS_*`
+environment variables, then compatible `S3_*` environment variables, then an
+optional `--from-env PATH` file, then stored CLI config.
 
 Examples:
 
 ```bash
+silofs configure
+silofs admin configure --from-env /opt/silofs/.env
 silofs --endpoint http://127.0.0.1:8080 mb s3://photos
 silofs cp ./image.jpg s3://photos/image.jpg
 silofs stat s3://photos/image.jpg
@@ -28,6 +32,11 @@ silofs admin inspect buckets --db-url jdbc:postgresql://localhost:5432/silofs
 silofs admin check-blobs --data-dir /var/lib/silofs/data
 silofs admin grant add --access-key-id AKIA... --bucket photos --permission READ
 ```
+
+`silofs configure` and its `login` alias prompt for endpoint, region, access
+key ID, and secret access key, then store them in the OS user config directory.
+The stored file is an env-style file with restrictive permissions where the OS
+supports them. It may contain plaintext secrets.
 
 Access-key create and rotate commands require `SILOS_ACCESS_KEY_SECRET_ENCRYPTION_KEY`
 or `S3_ACCESS_KEY_SECRET_ENCRYPTION_KEY`. The generated secret is printed once;
