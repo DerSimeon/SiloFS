@@ -217,7 +217,7 @@ class MultipartHandlers(
             intentId = published.intentId
             val stored = published.stored
 
-            // ---- Content-Length verification (red flag #3) ----
+            // ---- Content-Length verification ----
             if (stored.sizeBytes != contentLength) {
                 throw S3Errors.incompleteBody(contentLength, stored.sizeBytes)
             }
@@ -233,7 +233,7 @@ class MultipartHandlers(
                 }
             }
 
-            // ---- Checksum header validation (red flag #8) ----
+            // ---- Checksum header validation ----
             validatePartChecksums(
                 stored.blobPath,
                 checksumCrc32,
@@ -253,11 +253,10 @@ class MultipartHandlers(
             val etag = ETag.fromMd5Bytes(stored.md5)
             withS3 {
                 config.database.withTransaction { conn ->
-                    // Gap #2 fix: the final transaction must require state == INITIATED.
-                    // getMultipartUpload returns both INITIATED and COMPLETING, so
-                    // we must explicitly check the state here. This prevents a
-                    // part from being inserted/replaced while a completion is
-                    // in progress.
+                    // The final transaction must require INITIATED. The read
+                    // helper can also return COMPLETING uploads, so this
+                    // explicit state check prevents part mutation while a
+                    // completion is in progress.
                     val mpu =
                         repo.getMultipartUpload(conn, uploadId)
                             ?: throw S3Errors.noSuchUpload(uploadId)
@@ -318,10 +317,10 @@ class MultipartHandlers(
     /**
      * Atomically materialise the final object from the uploaded parts.
      *
-     * Race-safety (red flag #4): the upload is transitioned to COMPLETING
-     * BEFORE parts are read. This prevents concurrent UploadPart calls from
-     * adding/replacing parts while completion is in progress. The transition
-     * is atomic (conditional UPDATE), so only one completer can win.
+     * Race-safety: the upload is transitioned to COMPLETING before parts are
+     * read. This prevents concurrent UploadPart calls from adding/replacing
+     * parts while completion is in progress. The transition is atomic
+     * (conditional UPDATE), so only one completer can win.
      *
      * Crash-safety: the new blob is fsync'd and renamed to its content-addressed
      * path BEFORE the DB transaction opens. If the transaction commits, the
@@ -378,9 +377,8 @@ class MultipartHandlers(
                     // client retries.
                     throw S3Errors.noSuchUpload(uploadId)
                 }
-                // Gap #3 fix: check the return value. If the transition fails
-                // (another completer won the race between our read and our
-                // UPDATE), fail immediately.
+                // If another completer won the race between our read and the
+                // conditional UPDATE, fail immediately.
                 val transitioned = repo.markMultipartCompleting(conn, uploadId)
                 if (!transitioned) {
                     throw S3Errors.noSuchUpload(uploadId)

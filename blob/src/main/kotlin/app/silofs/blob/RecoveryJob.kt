@@ -149,8 +149,8 @@ class RecoveryJob(
      *   - Tombstones are cleaned up after processing, so the table doesn't
      *     grow unboundedly.
      *
-     * Gap #3: we exclude soft-deleted objects (`deleted_at IS NOT NULL`) from
-     * the reference set so their blobs can be reclaimed.
+     * Soft-deleted objects are excluded from the reference set so their blobs
+     * can be reclaimed.
      */
     internal fun sweepUnreferencedBlobs() {
         val objectsDir = (blobStore as FsBlobStore).dataDir.resolve("objects")
@@ -267,9 +267,8 @@ class RecoveryJob(
     ): Set<String> {
         if (hexes.isEmpty()) return emptySet()
         val placeholders = hexes.joinToString(",") { "?" }
-        // Gap #3: exclude soft-deleted objects (deleted_at IS NOT NULL) so
-        // their blobs can be reclaimed. Live objects, live multipart parts,
-        // and active blob write intents count as references.
+        // Live objects, live multipart parts, and active blob write intents
+        // count as references. Soft-deleted object blobs can be reclaimed.
         val sql =
             "SELECT encode(blob_sha256, 'hex') AS h FROM objects " +
                 "WHERE encode(blob_sha256, 'hex') IN ($placeholders) AND deleted_at IS NULL AND is_delete_marker = FALSE " +

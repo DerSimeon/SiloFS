@@ -80,10 +80,9 @@ object SigV4CanonicalBuilder {
         // Each pair is decoded (to handle percent-encoding from the client),
         // then re-encoded with the strict SigV4 encoder below.
         //
-        // Gap #6: use SigV4-specific percent decoding (NOT URLDecoder.decode,
-        // which treats '+' as a space — that's form-url-encoding behavior,
-        // not strict SigV4 URI encoding). Reject malformed percent-encoding
-        // deterministically instead of silently skipping.
+        // Use SigV4-specific percent decoding, not URLDecoder.decode, which
+        // treats '+' as a space. Reject malformed percent-encoding
+        // deterministically.
         val pairs =
             query.split('&').mapIndexedNotNull { idx, kv ->
                 if (kv.isEmpty()) return@mapIndexedNotNull null
@@ -114,10 +113,8 @@ object SigV4CanonicalBuilder {
         headers: Map<String, List<String>>,
         signedHeaders: List<String>,
     ): String {
-        // Gap #7: verify every signed header is present. If a header listed
-        // in SignedHeaders is absent from the request, the signature cannot
-        // be valid — reject deterministically rather than emitting an empty
-        // value that would produce a different canonical request.
+        // Every signed header must be present. If a header listed in
+        // SignedHeaders is absent, the signature cannot be valid.
         for (h in signedHeaders) {
             if (!headers.containsKey(h)) {
                 throw S3Errors.authorizationHeaderMalformed(

@@ -525,7 +525,7 @@ class S3Handlers(
             // is durable by this point, so blob GC must not delete this blob.
             Failpoint.crashIf("after-rename")
 
-            // ---- Content-Length verification (red flag #3) ----
+            // ---- Content-Length verification ----
             // The actual streamed byte count must match the declared Content-Length.
             // A mismatch indicates a truncated/malformed upload.
             if (stored.sizeBytes != contentLength) {
@@ -543,7 +543,7 @@ class S3Handlers(
                 }
             }
 
-            // ---- Checksum header validation (red flag #8) ----
+            // ---- Checksum header validation ----
             // If the client supplied any x-amz-checksum-* header, we verify it
             // against the actual blob content. Mismatch → InvalidDigest (400).
             validateChecksums(
