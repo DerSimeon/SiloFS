@@ -81,6 +81,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RETRY_CLOUDSMITH: ${{ inputs.retry_cloudsmith || false }}
+          WORKFLOW_HEAD_MESSAGE: ${{ github.event.workflow_run.head_commit.message || '' }}
         run: |
           artifacts=false
           image=false
@@ -91,6 +92,10 @@ jobs:
             echo "Release v${{ steps.version.outputs.version }} already exists; skipping publish."
             if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] && [ "$RETRY_CLOUDSMITH" = "true" ]; then
               echo "Retrying Cloudsmith upload for existing release."
+              artifacts=true
+              cloudsmith=true
+            elif [ "$GITHUB_EVENT_NAME" = "workflow_run" ] && printf '%s' "$WORKFLOW_HEAD_MESSAGE" | grep -q '\[retry-cloudsmith\]'; then
+              echo "Retrying Cloudsmith upload for existing release due to commit marker."
               artifacts=true
               cloudsmith=true
             fi
