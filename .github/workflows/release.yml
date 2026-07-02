@@ -14,6 +14,11 @@ on:
         description: Release version without the leading v, for example 0.15.1
         required: true
         type: string
+      retry_cloudsmith:
+        description: Retry Debian package upload when the GitHub release already exists
+        required: false
+        type: boolean
+        default: false
   push:
     tags:
       - "v*.*.*"
@@ -75,16 +80,35 @@ jobs:
         id: publish
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RETRY_CLOUDSMITH: ${{ inputs.retry_cloudsmith || false }}
         run: |
+          artifacts=false
+          image=false
+          github_release=false
+          cloudsmith=false
+
           if gh release view "v${{ steps.version.outputs.version }}" >/dev/null 2>&1; then
             echo "Release v${{ steps.version.outputs.version }} already exists; skipping publish."
-            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] && [ "$RETRY_CLOUDSMITH" = "true" ]; then
+              echo "Retrying Cloudsmith upload for existing release."
+              artifacts=true
+              cloudsmith=true
+            fi
           else
-            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            artifacts=true
+            image=true
+            github_release=true
+            cloudsmith=true
           fi
+          {
+            echo "artifacts=$artifacts"
+            echo "image=$image"
+            echo "github_release=$github_release"
+            echo "cloudsmith=$cloudsmith"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Build CLI binaries in pinned Go container
-        if: steps.publish.outputs.enabled == 'true'
+        if: steps.publish.outputs.artifacts == 'true'
         run: |
           mkdir -p dist/bin dist/pkg
           for arch in amd64 arm64; do
@@ -97,7 +121,7 @@ jobs:
           done
 
       - name: Build Debian packages
-        if: steps.publish.outputs.enabled == 'true'
+        if: steps.publish.outputs.artifacts == 'true'
         run: |
           set -euo pipefail
           for arch in amd64 arm64; do
@@ -122,13 +146,13 @@ jobs:
           done
 
       - name: Generate checksums
-        if: steps.publish.outputs.enabled == 'true'
+        if: steps.publish.outputs.artifacts == 'true'
         run: |
           cd dist
           sha256sum -- bin/* ./*.deb > checksums.txt
 
       - name: Log in to GHCR
-        if: steps.publish.outputs.enabled == 'true'
+        if: steps.publish.outputs.image == 'true'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -136,7 +160,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push server image
-        if: steps.publish.outputs.enabled == 'true'
+        if: steps.publish.outputs.image == 'true'
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -146,7 +170,7 @@ jobs:
             ${{ steps.image.outputs.name }}:latest
 
       - name: Publish GitHub release
-        if: steps.publish.outputs.enabled == 'true'
+        if: steps.publish.outputs.github_release == 'true'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ steps.version.outputs.version }}
@@ -160,11 +184,13 @@ jobs:
             dist/checksums.txt
 
       - name: Publish Debian packages to Cloudsmith
-        if: steps.publish.outputs.enabled == 'true' && env.CLOUDSMITH_ENABLED == 'true'
+        if: steps.publish.outputs.cloudsmith == 'true' && env.CLOUDSMITH_ENABLED == 'true'
         env:
           CLOUDSMITH_API_KEY: ${{ secrets.CLOUDSMITH_API_KEY }}
           CLOUDSMITH_OWNER: ${{ secrets.CLOUDSMITH_OWNER }}
           CLOUDSMITH_REPO: ${{ secrets.CLOUDSMITH_REPO }}
         run: |
           python3 -m pip install --user cloudsmith-cli
-          "$HOME/.local/bin/cloudsmith" push deb "$CLOUDSMITH_OWNER/$CLOUDSMITH_REPO/any-distro/any-version" dist/*.deb
+          for package in dist/*.deb; do
+            "$HOME/.local/bin/cloudsmith" push deb --republish "$CLOUDSMITH_OWNER/$CLOUDSMITH_REPO/any-distro/any-version" "$package"
+          done
